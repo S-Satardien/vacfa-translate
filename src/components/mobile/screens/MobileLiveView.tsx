@@ -125,61 +125,64 @@ export function MobileLiveView({
         )}
       </div>
 
-      <div className={styles.bottomBar} style={{ flexDirection: 'column', gap: '0.75rem', padding: '1rem', alignItems: 'stretch' }}>
+      <div className={styles.bottomBar} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1.25rem' }}>
         {/* Audio Language */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.875rem', color: 'var(--grey-400)' }}>Audio</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', padding: '0.75rem 1rem', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+             <Globe size={18} color="var(--vacfa-red-light)" />
+             <span style={{ fontSize: '1rem', color: 'var(--cream)', fontWeight: 500 }}>Audio</span>
+          </div>
           <button 
             onClick={onChangeLanguage}
             style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '0.5rem', 
-              backgroundColor: 'var(--surface-elevated)', 
-              padding: '0.4rem 0.75rem', 
-              borderRadius: '999px',
+              backgroundColor: 'var(--surface-primary)', 
+              padding: '0.6rem 1.25rem', 
+              borderRadius: '10px',
               border: '1px solid rgba(255,255,255,0.1)',
-              color: 'var(--cream)',
-              fontSize: '0.875rem',
-              cursor: 'pointer'
+              color: 'var(--white)',
+              fontSize: '1rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
             }}
           >
-            <Globe size={14} />
-            <span>{language.nativeName}</span>
+            {language.nativeName}
           </button>
         </div>
 
         {/* Captions Toggle & Language */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.875rem', color: 'var(--grey-400)' }}>Captions</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', padding: '0.75rem 1rem', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+             <span style={{ fontSize: '1rem', color: 'var(--cream)', fontWeight: 500 }}>Captions</span>
+          </div>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             {showCaptions && (
               <button 
                 onClick={onChangeLanguage}
                 style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  backgroundColor: 'var(--surface-elevated)', 
-                  padding: '0.4rem 0.75rem', 
-                  borderRadius: '999px',
+                  backgroundColor: 'var(--surface-primary)', 
+                  padding: '0.6rem 1.25rem', 
+                  borderRadius: '10px',
                   border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--cream)',
-                  fontSize: '0.875rem',
-                  cursor: 'pointer'
+                  color: 'var(--white)',
+                  fontSize: '1rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
                 }}
               >
-                <span>{captionLanguage.nativeName}</span>
+                {captionLanguage.nativeName}
               </button>
             )}
             
             <button
               onClick={onToggleCaptions}
               style={{
-                width: '40px',
-                height: '24px',
-                borderRadius: '12px',
-                backgroundColor: showCaptions ? 'var(--vacfa-red)' : 'var(--surface-elevated)',
+                width: '52px',
+                height: '30px',
+                borderRadius: '15px',
+                backgroundColor: showCaptions ? 'var(--vacfa-red)' : 'var(--grey-700)',
                 border: 'none',
                 position: 'relative',
                 transition: 'background-color 0.2s',
@@ -189,13 +192,13 @@ export function MobileLiveView({
               <div style={{
                 position: 'absolute',
                 top: '2px',
-                left: showCaptions ? '18px' : '2px',
-                width: '20px',
-                height: '20px',
-                borderRadius: '10px',
+                left: showCaptions ? '24px' : '2px',
+                width: '26px',
+                height: '26px',
+                borderRadius: '13px',
                 backgroundColor: 'white',
-                transition: 'left 0.2s',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
               }} />
             </button>
           </div>

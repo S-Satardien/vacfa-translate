@@ -61,7 +61,7 @@ export default function JoinPage() {
       >
         <div className={styles.logo}>
           <Image
-            src="/assets/vacfa-logo.png"
+            src={`${process.env.NODE_ENV === 'production' ? '/vacfa-translate' : ''}/assets/vacfa-logo.png`}
             alt="VACFA Logo"
             width={140}
             height={46}

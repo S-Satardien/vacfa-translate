@@ -37,7 +37,7 @@ export default function Hero() {
         >
           <motion.div variants={itemVariants} className={styles.logoWrap}>
             <Image 
-              src="/assets/vacfa-logo.png" 
+              src={`${process.env.NODE_ENV === 'production' ? '/vacfa-translate' : ''}/assets/vacfa-logo.png`}
               alt="VACFA Logo" 
               width={200} 
               height={66} 

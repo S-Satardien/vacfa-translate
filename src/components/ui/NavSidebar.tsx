@@ -55,7 +55,7 @@ export const NavSidebar: React.FC<NavSidebarProps> = ({
       <div className={styles.logoContainer}>
         <div className={styles.logo}>
           <Image 
-            src="/assets/vacfa-logo.png" 
+            src={`${process.env.NODE_ENV === 'production' ? '/vacfa-translate' : ''}/assets/vacfa-logo.png`}
             alt="VACFA Logo" 
             width={120} 
             height={40} 

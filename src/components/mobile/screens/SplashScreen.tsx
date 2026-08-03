@@ -34,7 +34,7 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
       
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 10 }}>
         <motion.img 
-          src="/assets/vacfa-logo.png" 
+          src={`${process.env.NODE_ENV === 'production' ? '/vacfa-translate' : ''}/assets/vacfa-logo.png`}
           alt="VACFA Logo" 
           style={{ width: '140px', height: 'auto', marginBottom: '16px' }}
           initial={{ y: -50, opacity: 0, scale: 0.8 }}

@@ -56,7 +56,7 @@ export default function Hero() {
           </motion.p>
           
           <motion.div variants={itemVariants} className={styles.actions}>
-            <Link href="/join" passHref legacyBehavior>
+            <Link href="/join">
               <Button variant="primary" size="lg">Connect to a Session</Button>
             </Link>
             <Button variant="ghost" size="lg" onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}>

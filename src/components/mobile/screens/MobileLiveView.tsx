@@ -103,7 +103,9 @@ export function MobileLiveView({
               <div key={i} className={styles.captionItem}>
                 <span className={styles.speakerName}>{cap.speaker}</span>
                 <p className={styles.captionText}>
-                  {captionLanguage.code === 'en' ? cap.originalText : (cap.translatedText || cap.originalText)}
+                  {captionLanguage.code === 'en' 
+                    ? cap.originalText 
+                    : (cap.translations?.[captionLanguage.code] || cap.originalText)}
                 </p>
               </div>
             ))}

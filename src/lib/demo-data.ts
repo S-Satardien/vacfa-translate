@@ -256,7 +256,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Dr. Amina Osei',
     timestamp: '09:00:12',
     originalText: 'Good morning, everyone. Welcome to the GAVI Immunization Summit 2026.',
-    translatedText: 'Bonjour à tous. Bienvenue au Sommet de Vaccination GAVI 2026.',
+    translations: {
+      fr: 'Bonjour à tous. Bienvenue au Sommet de Vaccination GAVI 2026.',
+      pt: 'Bom dia a todos. Bem-vindos à Cúpula de Imunização GAVI 2026.',
+      sw: 'Habari za asubuhi, kila mtu. Karibuni kwenye Mkutano wa Chanjo wa GAVI wa 2026.'
+    },
     glossaryTerms: [],
   },
   {
@@ -264,8 +268,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Dr. Amina Osei',
     timestamp: '09:00:28',
     originalText: 'Today we will be discussing the latest developments in mRNA vaccine technology and its deployment across Sub-Saharan Africa.',
-    translatedText: `Aujourd'hui, nous allons discuter des derniers développements de la technologie des vaccins à ARNm et de son déploiement en Afrique subsaharienne.`,
-    translatedPt: `Hoje discutiremos os últimos desenvolvimentos da tecnologia de vacinas de mRNA e sua implantação na África Subsaariana.`,
+    translations: {
+      fr: `Aujourd'hui, nous allons discuter des derniers développements de la technologie des vaccins à ARNm et de son déploiement en Afrique subsaharienne.`,
+      pt: `Hoje discutiremos os últimos desenvolvimentos da tecnologia de vacinas de mRNA e sua implantação na África Subsaariana.`,
+      sw: `Leo tutajadili maendeleo ya hivi punde katika teknolojia ya chanjo ya mRNA na usambazaji wake kote katika Kusini mwa Jangwa la Sahara.`
+    },
     glossaryTerms: ['mRNA vaccine'],
   },
   {
@@ -273,8 +280,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Dr. Amina Osei',
     timestamp: '09:00:51',
     originalText: 'As many of you know, maintaining the cold chain has been one of our greatest challenges in reaching rural communities.',
-    translatedText: `Comme beaucoup d'entre vous le savent, le maintien de la chaîne du froid a été l'un de nos plus grands défis pour atteindre les communautés rurales.`,
-    translatedPt: `Como muitos de vocês sabem, manter a cadeia de frio tem sido um dos nossos maiores desafios para alcançar as comunidades rurais.`,
+    translations: {
+      fr: `Comme beaucoup d'entre vous le savent, le maintien de la chaîne du froid a été l'un de nos plus grands défis pour atteindre les communautés rurales.`,
+      pt: `Como muitos de vocês sabem, manter a cadeia de frio tem sido um dos nossos maiores desafios para alcançar as comunidades rurais.`,
+      sw: `Kama wengi wenu mnavyojua, kudumisha mfumo wa baridi imekuwa moja ya changamoto zetu kubwa katika kufikia jamii za vijijini.`
+    },
     glossaryTerms: ['Cold chain'],
   },
   {
@@ -282,8 +292,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Prof. Kwame Asante',
     timestamp: '09:01:15',
     originalText: 'Thank you, Dr. Osei. I would like to present our findings on seroconversion rates following the booster dose campaigns in West Africa.',
-    translatedText: `Merci, Dr Osei. Je voudrais présenter nos résultats sur les taux de séroconversion suite aux campagnes de dose de rappel en Afrique de l'Ouest.`,
-    translatedPt: `Obrigado, Dra. Osei. Gostaria de apresentar nossas descobertas sobre as taxas de soroconversão após as campanhas de dose de reforço na África Ocidental.`,
+    translations: {
+      fr: `Merci, Dr Osei. Je voudrais présenter nos résultats sur les taux de séroconversion suite aux campagnes de dose de rappel en Afrique de l'Ouest.`,
+      pt: `Obrigado, Dra. Osei. Gostaria de apresentar nossas descobertas sobre as taxas de soroconversão após as campanhas de dose de reforço na África Ocidental.`,
+      sw: `Asante, Dkt. Osei. Ningependa kuwasilisha matokeo yetu kuhusu viwango vya mabadiliko ya seramu kufuatia kampeni za dozi ya nyongeza huko Afrika Magharibi.`
+    },
     glossaryTerms: ['seroconversion', 'booster dose'],
   },
   {
@@ -291,8 +304,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Prof. Kwame Asante',
     timestamp: '09:01:38',
     originalText: 'Our data shows that the lyophilized formulations performed exceptionally well in high-temperature environments, reducing dependency on traditional cold chain infrastructure.',
-    translatedText: 'Nos données montrent que les formulations lyophilisées ont exceptionnellement bien fonctionné dans des environnements à haute température, réduisant la dépendance aux infrastructures traditionnelles de chaîne du froid.',
-    translatedPt: `Nossos dados mostram que as formulações liofilizadas tiveram um desempenho excepcionalmente bom em ambientes de alta temperatura, reduzindo a dependência da infraestrutura tradicional da cadeia de frio.`,
+    translations: {
+      fr: 'Nos données montrent que les formulations lyophilisées ont exceptionnellement bien fonctionné dans des environnements à haute température, réduisant la dépendance aux infrastructures traditionnelles de chaîne du froid.',
+      pt: `Nossos dados mostram que as formulações liofilizadas tiveram um desempenho excepcionalmente bom em ambientes de alta temperatura, reduzindo a dependência da infraestrutura tradicional da cadeia de frio.`,
+      sw: `Takwimu zetu zinaonyesha kuwa michanganyiko iliyokaushwa kwa baridi ilifanya vizuri sana katika mazingira ya joto la juu, na kupunguza utegemezi wa miundombinu ya jadi ya mfumo wa baridi.`
+    },
     glossaryTerms: ['lyophilized', 'cold chain'],
   },
   {
@@ -300,8 +316,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Prof. Kwame Asante',
     timestamp: '09:02:05',
     originalText: 'The adjuvant we used in the trial significantly enhanced the immune response, particularly in populations with prior exposure.',
-    translatedText: `L'adjuvant que nous avons utilisé dans l'essai a considérablement amélioré la réponse immunitaire, en particulier dans les populations avec une exposition antérieure.`,
-    translatedPt: `O adjuvante que usamos no ensaio melhorou significativamente a resposta imune, particularmente em populações com exposição prévia.`,
+    translations: {
+      fr: `L'adjuvant que nous avons utilisé dans l'essai a considérablement amélioré la réponse immunitaire, en particulier dans les populations avec une exposition antérieure.`,
+      pt: `O adjuvante que usamos no ensaio melhorou significativamente a resposta imune, particularmente em populações com exposição prévia.`,
+      sw: `Kisaidizi cha chanjo tulichotumia katika jaribio kiliongeza kwa kiasi kikubwa majibu ya kinga, hasa katika makundi yenye mfiduo wa awali.`
+    },
     glossaryTerms: ['adjuvant'],
   },
   {
@@ -309,8 +328,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Dr. Fatima Diallo',
     timestamp: '09:02:30',
     originalText: 'I want to emphasize the importance of pharmacovigilance in these campaigns. We need robust surveillance systems to monitor adverse events.',
-    translatedText: `Je veux souligner l'importance de la pharmacovigilance dans ces campagnes. Nous avons besoin de systèmes de surveillance robustes pour surveiller les événements indésirables.`,
-    translatedPt: `Quero enfatizar a importância da farmacovigilância nessas campanhas. Precisamos de sistemas de vigilância robustos para monitorar eventos adversos.`,
+    translations: {
+      fr: `Je veux souligner l'importance de la pharmacovigilance dans ces campagnes. Nous avons besoin de systèmes de surveillance robustes pour surveiller les événements indésirables.`,
+      pt: `Quero enfatizar a importância da farmacovigilância nessas campanhas. Precisamos de sistemas de vigilância robustos para monitorar eventos adversos.`,
+      sw: `Ninataka kusisitiza umuhimu wa uangalifu wa dawa katika kampeni hizi. Tunahitaji mifumo imara ya ufuatiliaji ili kufuatilia matukio mabaya.`
+    },
     glossaryTerms: ['pharmacovigilance', 'surveillance'],
   },
   {
@@ -318,8 +340,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Dr. Fatima Diallo',
     timestamp: '09:02:52',
     originalText: 'The antigen stability data from Mozambique and Angola have been very encouraging for the Portuguese-speaking regions.',
-    translatedText: `Les données de stabilité des antigènes du Mozambique et de l'Angola ont été très encourageantes pour les régions lusophones.`,
-    translatedPt: `Os dados de estabilidade do antígeno de Moçambique e Angola têm sido muito animadores para as regiões de língua portuguesa.`,
+    translations: {
+      fr: `Les données de stabilité des antigènes du Mozambique et de l'Angola ont été très encourageantes pour les régions lusophones.`,
+      pt: `Os dados de estabilidade do antígeno de Moçambique e Angola têm sido muito animadores para as regiões de língua portuguesa.`,
+      sw: `Takwimu za uthabiti wa antijeni kutoka Msumbiji na Angola zimekuwa zikitia moyo sana kwa mikoa inayozungumza Kireno.`
+    },
     glossaryTerms: ['antigen'],
   },
   {
@@ -327,8 +352,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Dr. Amina Osei',
     timestamp: '09:03:18',
     originalText: 'Achieving herd immunity across the continent requires coordinated efforts between all national immunization programs.',
-    translatedText: `Atteindre l'immunité collective à travers le continent nécessite des efforts coordonnés entre tous les programmes nationaux de vaccination.`,
-    translatedPt: `Alcançar a imunidade de rebanho em todo o continente requer esforços coordenados entre todos os programas nacionais de imunização.`,
+    translations: {
+      fr: `Atteindre l'immunité collective à travers le continent nécessite des efforts coordonnés entre tous les programmes nationaux de vaccination.`,
+      pt: `Alcançar a imunidade de rebanho em todo o continente requer esforços coordenados entre todos os programas nacionais de imunização.`,
+      sw: `Kufikia kinga ya jamii kote barani kunahitaji juhudi za pamoja kati ya programu zote za kitaifa za chanjo.`
+    },
     glossaryTerms: ['herd immunity'],
   },
   {
@@ -336,7 +364,11 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
     speaker: 'Dr. Amina Osei',
     timestamp: '09:03:45',
     originalText: 'Let us now hear from our regional coordinators about the progress in their respective areas.',
-    translatedText: 'Écoutons maintenant nos coordinateurs régionaux sur les progrès réalisés dans leurs domaines respectifs.',
+    translations: {
+      fr: 'Écoutons maintenant nos coordinateurs régionaux sur les progrès réalisés dans leurs domaines respectifs.',
+      pt: 'Vamos agora ouvir nossos coordenadores regionais sobre o progresso em suas respectivas áreas.',
+      sw: 'Sasa tusikilize kutoka kwa waratibu wetu wa mikoa kuhusu maendeleo katika maeneo yao.'
+    },
     glossaryTerms: [],
   },
 ];

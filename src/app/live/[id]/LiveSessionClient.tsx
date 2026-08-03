@@ -148,7 +148,12 @@ export default function LiveSessionClient({ session }: { session: Session }) {
                   </div>
                   <div className={styles.originalText}>{cap.originalText}</div>
                   <div className={styles.translatedText}>
-                    {renderTextWithGlossary(cap.translatedText, cap.glossaryTerms)}
+                    {renderTextWithGlossary(
+                      captionLang === 'en' 
+                        ? cap.originalText 
+                        : (cap.translations?.[captionLang] || cap.originalText), 
+                      cap.glossaryTerms
+                    )}
                   </div>
                 </motion.div>
               ))}

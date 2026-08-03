@@ -36,15 +36,14 @@ export interface GlossaryTerm {
 }
 
 // Caption entry
-export interface CaptionEntry  {
-    id: string;
-    speaker: string;
-    timestamp: string;
-    originalText: string;
-    translatedText: string;
-    translatedPt?: string;
-    glossaryTerms?: string[]; // terms that appear in this caption
-  }
+export interface CaptionEntry {
+  id: string;
+  speaker: string;
+  timestamp: string;
+  originalText: string;
+  translations: Record<string, string>; // language code -> translation
+  glossaryTerms?: string[]; // terms that appear in this caption
+}
 
 // Translation channel
 export interface TranslationChannel {

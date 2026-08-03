@@ -1,0 +1,219 @@
+.container {
+  display: flex;
+  height: 100vh;
+  background-color: var(--surface-primary, #0F0F0F);
+  color: var(--cream, #F5F0E8);
+  font-family: var(--font-inter, sans-serif);
+}
+
+.leftPanel {
+  width: 300px;
+  background-color: var(--surface-elevated, #1A1A1A);
+  border-right: 1px solid var(--grey-700, #424242);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.headerInfo {
+  margin-bottom: auto;
+}
+
+.title {
+  font-family: var(--font-dm-sans, sans-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.code {
+  color: var(--grey-400, #9E9E9E);
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+}
+
+.liveBadge {
+  display: inline-block;
+  background-color: var(--vacfa-red, #C41E3A);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-bottom: 32px;
+}
+
+.audioVisualizer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  margin-bottom: 32px;
+}
+
+.bar {
+  width: 4px;
+  background-color: var(--vacfa-red-light, #E8485E);
+  border-radius: 2px;
+  animation: waveform 1.2s ease-in-out infinite;
+}
+
+.bar:nth-child(1) { animation-delay: 0.0s; height: 30%; }
+.bar:nth-child(2) { animation-delay: 0.2s; height: 60%; }
+.bar:nth-child(3) { animation-delay: 0.4s; height: 100%; }
+.bar:nth-child(4) { animation-delay: 0.6s; height: 70%; }
+.bar:nth-child(5) { animation-delay: 0.8s; height: 40%; }
+
+@keyframes waveform {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1); }
+}
+
+.leaveButton {
+  background-color: transparent;
+  color: var(--vacfa-red, #C41E3A);
+  border: 1px solid var(--vacfa-red, #C41E3A);
+  padding: 12px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.leaveButton:hover {
+  background-color: var(--vacfa-red, #C41E3A);
+  color: white;
+}
+
+.centerPanel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.captionsContainer {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 16px;
+  padding-bottom: 32px;
+}
+
+.captionBox {
+  background-color: var(--surface-glass, rgba(26,26,26,0.7));
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid var(--grey-700, #424242);
+}
+
+.captionHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  color: var(--grey-400, #9E9E9E);
+}
+
+.speaker {
+  font-weight: 600;
+  color: var(--vacfa-red-light, #E8485E);
+}
+
+.originalText {
+  font-size: 1.1rem;
+  color: var(--grey-400, #9E9E9E);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.translatedText {
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: var(--cream, #F5F0E8);
+  line-height: 1.4;
+}
+
+.glossaryTerm {
+  color: var(--vacfa-red-light, #E8485E);
+  font-weight: 700;
+}
+
+.rightPanel {
+  width: 320px;
+  background-color: var(--surface-elevated, #1A1A1A);
+  border-left: 1px solid var(--grey-700, #424242);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.channelsTitle {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 24px;
+  font-family: var(--font-dm-sans, sans-serif);
+}
+
+.channelList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.channelItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-radius: 8px;
+  background-color: var(--surface-primary, #0F0F0F);
+  border: 1px solid var(--grey-700, #424242);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.channelItem:hover {
+  border-color: var(--grey-400, #9E9E9E);
+}
+
+.channelActive {
+  background-color: var(--vacfa-red, #C41E3A);
+  border-color: var(--vacfa-red, #C41E3A);
+}
+
+.channelInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.channelName {
+  font-weight: 600;
+}
+
+.channelActive .channelName {
+  color: white;
+}
+
+.listenerCount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--grey-400, #9E9E9E);
+}
+
+.channelActive .listenerCount {
+  color: rgba(255, 255, 255, 0.8);
+}

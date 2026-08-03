@@ -1,0 +1,70 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  padding: 2rem 1.5rem;
+  background-color: var(--surface-primary);
+  color: var(--cream);
+  box-sizing: border-box;
+}
+
+.header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  color: var(--grey-400);
+  font-size: 1rem;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-bottom: 2rem;
+}
+
+.languageBtn {
+  background: var(--surface-elevated);
+  border: 1px solid var(--grey-700);
+  border-radius: 12px;
+  padding: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--cream);
+  text-align: left;
+}
+
+.languageBtn:hover, .languageBtn:focus {
+  background: var(--surface-glass);
+  border-color: var(--vacfa-red-light);
+  outline: none;
+}
+
+.languageInfo {
+  display: flex;
+  flex-direction: column;
+}
+
+.nativeName {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.englishName {
+  font-size: 0.9rem;
+  color: var(--grey-400);
+}

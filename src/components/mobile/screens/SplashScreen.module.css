@@ -1,0 +1,53 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(-45deg, var(--surface-primary), #2a0810, var(--surface-elevated), #3a0b16);
+  background-size: 400% 400%;
+  animation: gradientBG 6s ease infinite;
+  color: var(--cream);
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes gradientBG {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.logo {
+  font-family: var(--font-dm-sans, 'DM Sans', sans-serif);
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--vacfa-red);
+}
+
+.subtitle {
+  font-family: var(--font-inter, 'Inter', sans-serif);
+  font-size: 1.1rem;
+  color: var(--grey-400);
+  margin-top: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.15);
+}
+
+.glowBox {
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  background: var(--vacfa-red);
+  filter: blur(80px);
+  opacity: 0.25;
+  border-radius: 50%;
+  animation: pulseGlow 4s ease-in-out infinite alternate;
+}
+
+@keyframes pulseGlow {
+  0% { transform: scale(0.8); opacity: 0.15; }
+  100% { transform: scale(1.2); opacity: 0.3; }
+}

@@ -1,0 +1,74 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  font-family: var(--font-inter, 'Inter', sans-serif);
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease-in-out;
+  outline: none;
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+.icon {
+  display: inline-flex;
+}
+
+/* Sizes */
+.size-sm {
+  padding: 6px 12px;
+  font-size: 0.875rem;
+}
+.size-md {
+  padding: 10px 16px;
+  font-size: 1rem;
+}
+.size-lg {
+  padding: 14px 24px;
+  font-size: 1.125rem;
+}
+
+/* Variants */
+.variant-primary {
+  background-color: var(--vacfa-red, #C41E3A);
+  color: var(--white, #FFFFFF);
+}
+.variant-primary:hover:not(.disabled) {
+  background-color: var(--vacfa-red-dark, #9B1830);
+}
+
+.variant-ghost {
+  background-color: transparent;
+  color: var(--cream, #F5F0E8);
+}
+.variant-ghost:hover:not(.disabled) {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.variant-outline {
+  background-color: transparent;
+  color: var(--cream, #F5F0E8);
+  border: 1px solid var(--cream, #F5F0E8);
+}
+.variant-outline:hover:not(.disabled) {
+  background-color: rgba(245, 240, 232, 0.1);
+}
+
+.variant-danger {
+  background-color: var(--vacfa-red-dark, #9B1830);
+  color: var(--white, #FFFFFF);
+}
+.variant-danger:hover:not(.disabled) {
+  background-color: #7A1224;
+}

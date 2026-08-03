@@ -1,0 +1,83 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  padding: 2rem 1.5rem;
+  background-color: var(--surface-primary);
+  color: var(--cream);
+  box-sizing: border-box;
+}
+
+.header {
+  margin-bottom: 3rem;
+  text-align: center;
+}
+
+.title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  color: var(--grey-400);
+  font-size: 1rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.inputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.label {
+  font-size: 0.9rem;
+  color: var(--grey-400);
+}
+
+.input {
+  background: var(--surface-elevated);
+  border: 1px solid var(--grey-700);
+  border-radius: 8px;
+  padding: 1rem;
+  font-size: 1.5rem;
+  color: var(--cream);
+  text-align: center;
+  letter-spacing: 0.2em;
+  font-family: 'Inter', sans-serif;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--vacfa-red);
+}
+
+.button {
+  background: var(--vacfa-red);
+  color: var(--white);
+  border: none;
+  border-radius: 8px;
+  padding: 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-top: 1rem;
+}
+
+.button:hover {
+  background: var(--vacfa-red-dark);
+}
+
+.button:disabled {
+  background: var(--grey-700);
+  cursor: not-allowed;
+  color: var(--grey-400);
+}

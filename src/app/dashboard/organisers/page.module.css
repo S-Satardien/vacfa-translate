@@ -1,0 +1,53 @@
+/* src/app/dashboard/organisers/page.module.css */
+.container {
+  padding: 2rem;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+.title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 2rem;
+  color: var(--cream);
+  margin: 0;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.organiserCard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+}
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.name {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--cream);
+}
+.email {
+  font-size: 0.875rem;
+  color: var(--grey-400);
+}
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--grey-400);
+}
+.statNumber {
+  font-weight: 600;
+  color: var(--cream);
+}

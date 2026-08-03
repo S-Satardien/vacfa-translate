@@ -1,0 +1,59 @@
+.container {
+  display: flex;
+  align-items: center;
+  background-color: var(--surface-elevated, #1A1A1A);
+  border: 1px solid var(--grey-700, #424242);
+  border-radius: 12px;
+  padding: 0 12px;
+  height: 44px;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.container.focused {
+  border-color: var(--vacfa-red, #C41E3A);
+  box-shadow: 0 0 0 2px rgba(196, 30, 58, 0.2);
+}
+
+.searchIcon {
+  color: var(--grey-400, #9E9E9E);
+  flex-shrink: 0;
+}
+
+.container.focused .searchIcon {
+  color: var(--vacfa-red-light, #E8485E);
+}
+
+.input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--cream, #F5F0E8);
+  font-family: var(--font-inter, 'Inter', sans-serif);
+  font-size: 0.95rem;
+  padding: 0 12px;
+  width: 100%;
+}
+
+.input::placeholder {
+  color: var(--grey-400, #9E9E9E);
+}
+
+.clearBtn {
+  background: transparent;
+  border: none;
+  color: var(--grey-400, #9E9E9E);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.clearBtn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--cream, #F5F0E8);
+}

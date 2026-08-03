@@ -1,0 +1,138 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background-color: var(--surface-primary);
+  color: var(--cream);
+  position: relative;
+  overflow: hidden;
+}
+
+.header {
+  padding: 1.5rem;
+  background: var(--surface-elevated);
+  border-bottom: 1px solid var(--grey-700);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.liveIndicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(196, 30, 58, 0.1);
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(196, 30, 58, 0.2);
+}
+
+.liveDot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--vacfa-red);
+  border-radius: 50%;
+}
+
+.liveText {
+  color: var(--vacfa-red);
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+}
+
+.languageSelector {
+  background: none;
+  border: none;
+  color: var(--cream);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.5rem;
+}
+
+.waveformContainer {
+  padding: 2rem 1.5rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 120px;
+}
+
+.waveform {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.bar {
+  width: 6px;
+  background-color: var(--vacfa-red-light);
+  border-radius: 3px;
+  opacity: 0.8;
+}
+
+.captionsArea {
+  flex: 1;
+  padding: 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.captionItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.speakerName {
+  font-size: 0.85rem;
+  color: var(--grey-400);
+  font-weight: 500;
+}
+
+.captionText {
+  font-size: 1.25rem;
+  line-height: 1.5;
+  color: var(--grey-400);
+}
+
+.currentCaptionItem {
+  opacity: 1;
+}
+
+.currentText {
+  font-size: 1.5rem;
+  line-height: 1.4;
+  color: var(--cream);
+  font-weight: 500;
+}
+
+.bottomBar {
+  padding: 1.5rem;
+  background: var(--surface-elevated);
+  border-top: 1px solid var(--grey-700);
+}
+
+.leaveBtn {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--vacfa-red);
+  color: var(--vacfa-red);
+  padding: 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.leaveBtn:hover {
+  background: rgba(196, 30, 58, 0.1);
+}

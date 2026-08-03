@@ -1,0 +1,46 @@
+.container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  background: rgba(26, 26, 26, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 4px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.option {
+  position: relative;
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: var(--font-inter, 'Inter', sans-serif);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--grey-400, #9E9E9E);
+  transition: color 0.3s ease;
+  outline: none;
+}
+
+.option.active {
+  color: var(--white, #FFFFFF);
+}
+
+.label {
+  position: relative;
+  z-index: 1;
+}
+
+.activePill {
+  position: absolute;
+  inset: 0;
+  background-color: var(--vacfa-red, #C41E3A);
+  border-radius: 999px;
+  z-index: 0;
+}

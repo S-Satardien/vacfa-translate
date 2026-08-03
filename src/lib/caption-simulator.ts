@@ -100,11 +100,8 @@ export function createCaptionSimulator(
 
     // Determine text to type based on active language
     let textToType = caption.originalText; // default to English
-    if (activeLang === 'fr') textToType = caption.translatedText;
-    if (activeLang === 'pt' && caption.translatedPt) textToType = caption.translatedPt;
-    // For other languages, simulate by mangling the original text slightly to look different
-    if (activeLang !== 'en' && activeLang !== 'fr' && activeLang !== 'pt') {
-      textToType = caption.originalText.split(' ').map(w => w + (activeLang === 'sw' ? 'a' : 'i')).join(' ');
+    if (activeLang !== 'en' && caption.translations?.[activeLang]) {
+      textToType = caption.translations[activeLang];
     }
 
     const words = textToType.split(' ');

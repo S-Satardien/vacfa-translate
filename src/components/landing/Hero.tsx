@@ -56,11 +56,11 @@ export default function Hero() {
           </motion.p>
           
           <motion.div variants={itemVariants} className={styles.actions}>
-            <Link href="/dashboard" passHref legacyBehavior>
-              <Button variant="primary" size="lg">Start a Session</Button>
+            <Link href="/join" passHref legacyBehavior>
+              <Button variant="primary" size="lg">Connect to a Session</Button>
             </Link>
             <Button variant="ghost" size="lg" onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}>
-              Join as Listener
+              Learn More
             </Button>
           </motion.div>
         </motion.div>

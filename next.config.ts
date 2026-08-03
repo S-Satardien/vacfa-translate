@@ -1,8 +1,11 @@
 import type { NextConfig } from 'next';
 
+const isProd = process.env.NODE_ENV === 'production';
+
 const nextConfig: NextConfig = {
   output: 'export',
-  basePath: process.env.NODE_ENV === 'production' ? '/vacfa-translate' : '',
+  basePath: isProd ? '/vacfa-translate' : '',
+  assetPrefix: isProd ? '/vacfa-translate/' : '',
   images: { unoptimized: true },
   trailingSlash: true,
 };

@@ -65,7 +65,7 @@ export default function LiveSessionClient({ session }: { session: Session }) {
   }, [captionLang, simulator]);
 
   const handleLeave = () => {
-    router.push('/dashboard');
+    router.push('/');
   };
 
   const renderTextWithGlossary = (text: string, glossaryTerms: string[] = []) => {

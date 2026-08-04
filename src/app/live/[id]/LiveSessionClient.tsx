@@ -301,7 +301,7 @@ export default function LiveSessionClient({ session }: { session: Session }) {
       >
         <form onSubmit={handleGlossarySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', padding: '0.5rem 0' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label style={{ fontSize: '0.85rem', color: 'var(--grey-400)' }}>Source Term (English)</label>
+            <label style={{ fontSize: '0.85rem', color: 'var(--grey-400)' }}>Source Term (Spoken Word)</label>
             <input 
               type="text"
               value={glossaryTerm}

@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, Users, Mic, Globe, Send, CheckCircle2 } from 'lucide-react';
+import { LogOut, Users, Mic, Globe, Send, CheckCircle2, PlusCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { createCaptionSimulator } from '@/lib/caption-simulator';
 import type { Session, CaptionEntry } from '@/lib/types';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
 import styles from './LiveSession.module.css';
 
 function useCaptionSimulator() {
@@ -51,7 +53,10 @@ export default function LiveSessionClient({ session }: { session: Session }) {
   const [notes, setNotes] = useState('');
   
   // Glossary form state
+  const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
   const [glossaryTerm, setGlossaryTerm] = useState('');
+  const [glossaryCategory, setGlossaryCategory] = useState('epidemiology');
+  const [glossaryContext, setGlossaryContext] = useState('');
   const [glossarySubmitted, setGlossarySubmitted] = useState(false);
   
   const captionsEndRef = useRef<HTMLDivElement>(null);
@@ -79,8 +84,10 @@ export default function LiveSessionClient({ session }: { session: Session }) {
     setGlossarySubmitted(true);
     setTimeout(() => {
       setGlossarySubmitted(false);
+      setIsGlossaryModalOpen(false);
       setGlossaryTerm('');
-    }, 3000);
+      setGlossaryContext('');
+    }, 2000);
   };
 
   const renderTextWithGlossary = (text: string, glossaryTerms: string[] = []) => {
@@ -146,59 +153,11 @@ export default function LiveSessionClient({ session }: { session: Session }) {
             <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--grey-400)' }}>Suggest Glossary Term</h3>
             <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--grey-700)' }}>Spot an incorrect translation? Add it to the memory bank.</p>
             
-            <form onSubmit={handleGlossarySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: '1 1 auto' }}>
-              <input 
-                type="text"
-                value={glossaryTerm}
-                onChange={(e) => setGlossaryTerm(e.target.value)}
-                placeholder="e.g. Seroconversion"
-                disabled={glossarySubmitted}
-                style={{
-                  width: '100%',
-                  background: 'var(--surface-primary)',
-                  border: '1px solid var(--surface-elevated)',
-                  borderRadius: '12px',
-                  padding: '0.75rem 1rem',
-                  color: 'var(--cream)',
-                  fontFamily: 'inherit',
-                  outline: 'none',
-                  transition: 'border-color 0.2s',
-                }}
-                onFocus={(e) => e.target.style.borderColor = 'var(--vacfa-red)'}
-                onBlur={(e) => e.target.style.borderColor = 'var(--surface-elevated)'}
-              />
-              <button 
-                type="submit"
-                disabled={glossarySubmitted || !glossaryTerm.trim()}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: glossarySubmitted ? 'var(--success)' : 'rgba(255,255,255,0.05)',
-                  border: '1px solid',
-                  borderColor: glossarySubmitted ? 'var(--success)' : 'rgba(255,255,255,0.1)',
-                  borderRadius: '12px',
-                  color: glossarySubmitted ? 'white' : 'var(--cream)',
-                  fontSize: '0.85rem',
-                  fontWeight: 500,
-                  cursor: glossarySubmitted || !glossaryTerm.trim() ? 'not-allowed' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.5rem',
-                  transition: 'all 0.2s'
-                }}
-              >
-                {glossarySubmitted ? (
-                  <>
-                    <CheckCircle2 size={16} /> Added to Memory
-                  </>
-                ) : (
-                  <>
-                    <Send size={16} /> Submit Term
-                  </>
-                )}
-              </button>
-            </form>
+            <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-primary)', borderRadius: '12px', border: '1px solid var(--surface-elevated)' }}>
+              <Button variant="outline" size="sm" onClick={() => setIsGlossaryModalOpen(true)}>
+                <PlusCircle size={16} style={{ marginRight: '8px' }} /> Add to Glossary
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -334,6 +293,72 @@ export default function LiveSessionClient({ session }: { session: Session }) {
         </div>
 
       </div>
+
+      <Modal 
+        isOpen={isGlossaryModalOpen} 
+        onClose={() => !glossarySubmitted && setIsGlossaryModalOpen(false)} 
+        title="Add to Glossary Memory"
+      >
+        <form onSubmit={handleGlossarySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', padding: '0.5rem 0' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--grey-400)' }}>Source Term (English)</label>
+            <input 
+              type="text"
+              value={glossaryTerm}
+              onChange={(e) => setGlossaryTerm(e.target.value)}
+              placeholder="e.g. Seroconversion"
+              required
+              disabled={glossarySubmitted}
+              style={{
+                width: '100%', background: 'var(--surface-primary)', border: '1px solid var(--surface-elevated)', borderRadius: '8px', padding: '0.75rem', color: 'var(--cream)', fontFamily: 'inherit', outline: 'none'
+              }}
+              onFocus={(e) => e.target.style.borderColor = 'var(--vacfa-red)'}
+              onBlur={(e) => e.target.style.borderColor = 'var(--surface-elevated)'}
+            />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--grey-400)' }}>Category</label>
+            <select
+              value={glossaryCategory}
+              onChange={(e) => setGlossaryCategory(e.target.value)}
+              disabled={glossarySubmitted}
+              style={{
+                width: '100%', background: 'var(--surface-primary)', border: '1px solid var(--surface-elevated)', borderRadius: '8px', padding: '0.75rem', color: 'var(--cream)', fontFamily: 'inherit', outline: 'none'
+              }}
+              onFocus={(e) => e.target.style.borderColor = 'var(--vacfa-red)'}
+              onBlur={(e) => e.target.style.borderColor = 'var(--surface-elevated)'}
+            >
+              <option value="epidemiology">Epidemiology</option>
+              <option value="immunology">Immunology</option>
+              <option value="logistics">Logistics</option>
+              <option value="policy">Policy</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--grey-400)' }}>Context / Suggested Translation (Optional)</label>
+            <textarea 
+              value={glossaryContext}
+              onChange={(e) => setGlossaryContext(e.target.value)}
+              placeholder="Explain how this should be translated or used..."
+              disabled={glossarySubmitted}
+              style={{
+                width: '100%', background: 'var(--surface-primary)', border: '1px solid var(--surface-elevated)', borderRadius: '8px', padding: '0.75rem', color: 'var(--cream)', fontFamily: 'inherit', outline: 'none', resize: 'none', minHeight: '80px'
+              }}
+              onFocus={(e) => e.target.style.borderColor = 'var(--vacfa-red)'}
+              onBlur={(e) => e.target.style.borderColor = 'var(--surface-elevated)'}
+            />
+          </div>
+
+          <Button type="submit" variant="primary" size="lg" disabled={glossarySubmitted || !glossaryTerm.trim()}>
+            {glossarySubmitted ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto' }}><CheckCircle2 size={18} /> Added to Memory</span>
+            ) : "Submit to Memory"}
+          </Button>
+        </form>
+      </Modal>
+
     </div>
   );
 }

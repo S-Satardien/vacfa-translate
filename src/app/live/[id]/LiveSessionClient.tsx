@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, Users, Mic, Globe } from 'lucide-react';
+import { LogOut, Users, Mic, Globe, Send, CheckCircle2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { createCaptionSimulator } from '@/lib/caption-simulator';
 import type { Session, CaptionEntry } from '@/lib/types';
@@ -50,6 +50,10 @@ export default function LiveSessionClient({ session }: { session: Session }) {
   const [showCaptions, setShowCaptions] = useState(true);
   const [notes, setNotes] = useState('');
   
+  // Glossary form state
+  const [glossaryTerm, setGlossaryTerm] = useState('');
+  const [glossarySubmitted, setGlossarySubmitted] = useState(false);
+  
   const captionsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,6 +70,17 @@ export default function LiveSessionClient({ session }: { session: Session }) {
 
   const handleLeave = () => {
     router.push('/');
+  };
+
+  const handleGlossarySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!glossaryTerm.trim()) return;
+    // In a real app, this would send an API request to add the term
+    setGlossarySubmitted(true);
+    setTimeout(() => {
+      setGlossarySubmitted(false);
+      setGlossaryTerm('');
+    }, 3000);
   };
 
   const renderTextWithGlossary = (text: string, glossaryTerms: string[] = []) => {
@@ -101,27 +116,90 @@ export default function LiveSessionClient({ session }: { session: Session }) {
           </div>
         </div>
 
-        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', marginTop: '2rem', gap: '0.5rem' }}>
-          <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--grey-400)' }}>My Notes / Q&A</h3>
-          <textarea 
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Type your notes or questions for the speaker here..."
-            style={{
-              flex: '1 1 auto',
-              background: 'var(--surface-primary)',
-              border: '1px solid var(--surface-elevated)',
-              borderRadius: '12px',
-              padding: '1rem',
-              color: 'var(--cream)',
-              resize: 'none',
-              fontFamily: 'inherit',
-              outline: 'none',
-              transition: 'border-color 0.2s',
-            }}
-            onFocus={(e) => e.target.style.borderColor = 'var(--vacfa-red)'}
-            onBlur={(e) => e.target.style.borderColor = 'var(--surface-elevated)'}
-          />
+        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', marginTop: '2rem', gap: '1.5rem', overflowY: 'auto' }}>
+          {/* Notes Section */}
+          <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: '150px' }}>
+            <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--grey-400)' }}>My Notes / Q&A</h3>
+            <textarea 
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Type your notes or questions for the speaker here..."
+              style={{
+                flex: '1 1 auto',
+                background: 'var(--surface-primary)',
+                border: '1px solid var(--surface-elevated)',
+                borderRadius: '12px',
+                padding: '1rem',
+                color: 'var(--cream)',
+                resize: 'none',
+                fontFamily: 'inherit',
+                outline: 'none',
+                transition: 'border-color 0.2s',
+              }}
+              onFocus={(e) => e.target.style.borderColor = 'var(--vacfa-red)'}
+              onBlur={(e) => e.target.style.borderColor = 'var(--surface-elevated)'}
+            />
+          </div>
+
+          {/* Glossary Suggestion Section */}
+          <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: '150px' }}>
+            <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--grey-400)' }}>Suggest Glossary Term</h3>
+            <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--grey-700)' }}>Spot an incorrect translation? Add it to the memory bank.</p>
+            
+            <form onSubmit={handleGlossarySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: '1 1 auto' }}>
+              <input 
+                type="text"
+                value={glossaryTerm}
+                onChange={(e) => setGlossaryTerm(e.target.value)}
+                placeholder="e.g. Seroconversion"
+                disabled={glossarySubmitted}
+                style={{
+                  width: '100%',
+                  background: 'var(--surface-primary)',
+                  border: '1px solid var(--surface-elevated)',
+                  borderRadius: '12px',
+                  padding: '0.75rem 1rem',
+                  color: 'var(--cream)',
+                  fontFamily: 'inherit',
+                  outline: 'none',
+                  transition: 'border-color 0.2s',
+                }}
+                onFocus={(e) => e.target.style.borderColor = 'var(--vacfa-red)'}
+                onBlur={(e) => e.target.style.borderColor = 'var(--surface-elevated)'}
+              />
+              <button 
+                type="submit"
+                disabled={glossarySubmitted || !glossaryTerm.trim()}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  background: glossarySubmitted ? 'var(--success)' : 'rgba(255,255,255,0.05)',
+                  border: '1px solid',
+                  borderColor: glossarySubmitted ? 'var(--success)' : 'rgba(255,255,255,0.1)',
+                  borderRadius: '12px',
+                  color: glossarySubmitted ? 'white' : 'var(--cream)',
+                  fontSize: '0.85rem',
+                  fontWeight: 500,
+                  cursor: glossarySubmitted || !glossaryTerm.trim() ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.5rem',
+                  transition: 'all 0.2s'
+                }}
+              >
+                {glossarySubmitted ? (
+                  <>
+                    <CheckCircle2 size={16} /> Added to Memory
+                  </>
+                ) : (
+                  <>
+                    <Send size={16} /> Submit Term
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
         </div>
 
         <button className={styles.leaveButton} onClick={handleLeave} style={{ marginTop: '1.5rem' }}>

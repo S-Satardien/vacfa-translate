@@ -2,7 +2,11 @@
  * VACFA Translate — Live Audio Speech Synthesis (TTS) Engine
  * 
  * Synthesizes translated text into spoken audio using the browser's Web Speech API (SpeechSynthesis).
- * Enables delegates to hear real-time interpretations in French, Portuguese, Swahili, or English.
+ * Tuned specifically for African conference delegates:
+ * - Portuguese: Prioritizes African Lusophone (Angola, Mozambique) & European Portuguese over Brazilian.
+ * - French: Prioritizes African Francophone & clean standard French with measured conference cadence.
+ * - Swahili: Prioritizes East African Swahili (Kenya, Tanzania).
+ * - English: Prioritizes African English (South Africa, Kenya, Nigeria, Commonwealth).
  */
 
 interface SpeechSynthesisController {
@@ -43,7 +47,42 @@ function cleanTextForSpeech(text: string): string {
 }
 
 /**
- * Finds the most suitable browser voice for a target language code.
+ * Prepares acronyms (like NITAG, AEFI, VVM, DALY) for natural phonetic speech in the target language.
+ */
+function prepareAcronymsForSpeech(text: string, langCode: string): string {
+  let processed = text;
+  if (langCode === 'fr') {
+    processed = processed
+      .replace(/\bNITAG\b/g, 'Ni-tag')
+      .replace(/\bRITAG\b/g, 'Ri-tag')
+      .replace(/\bAEFI\b/g, 'A. E. F. I.')
+      .replace(/\bPEV\b/g, 'P. E. V.')
+      .replace(/\bVVM\b/g, 'V. V. M.')
+      .replace(/\bDALY\b/g, 'Daly')
+      .replace(/\bQALY\b/g, 'Koualy');
+  } else if (langCode === 'pt') {
+    processed = processed
+      .replace(/\bNITAG\b/g, 'Ni-tag')
+      .replace(/\bRITAG\b/g, 'Ri-tag')
+      .replace(/\bAEFI\b/g, 'A. E. F. I.')
+      .replace(/\bEAPV\b/g, 'E. A. P. V.')
+      .replace(/\bVVM\b/g, 'V. V. M.')
+      .replace(/\bDALY\b/g, 'Daly');
+  } else if (langCode === 'sw') {
+    processed = processed
+      .replace(/\bNITAG\b/g, 'Ni-tag')
+      .replace(/\bRITAG\b/g, 'Ri-tag')
+      .replace(/\bAEFI\b/g, 'A. E. F. I.')
+      .replace(/\bEPI\b/g, 'E. P. I.')
+      .replace(/\bVVM\b/g, 'V. V. M.')
+      .replace(/\bDALY\b/g, 'Daly');
+  }
+  return processed;
+}
+
+/**
+ * Finds the most suitable browser voice for a target language code,
+ * taking into account African conference listening preferences.
  * 
  * @param langCode Target ISO language code ('fr', 'pt', 'sw', 'en').
  */
@@ -56,11 +95,16 @@ function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null 
   const voices = cachedVoices.length > 0 ? cachedVoices : window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return null;
 
+  // Regional preferences:
+  // - Portuguese: African Lusophone (Angola/Mozambique) and European Portuguese prioritized over Brazilian (pt-BR)
+  // - French: African Francophone and standard French
+  // - Swahili: East African Kiswahili
+  // - English: African Commonwealth English
   const prefixMap: Record<string, string[]> = {
-    fr: ['fr-FR', 'fr-CA', 'fr-BE', 'fr-CH', 'fr'],
-    pt: ['pt-PT', 'pt-BR', 'pt'],
-    sw: ['sw-KE', 'sw-TZ', 'sw', 'bnt'],
-    en: ['en-US', 'en-GB', 'en-ZA', 'en-AU', 'en'],
+    fr: ['fr-SN', 'fr-CI', 'fr-CD', 'fr-CM', 'fr-FR', 'fr-BE', 'fr-CH', 'fr'],
+    pt: ['pt-AO', 'pt-MZ', 'pt-PT', 'pt-CV', 'pt-GW', 'pt-ST', 'pt'],
+    sw: ['sw-KE', 'sw-TZ', 'sw-UG', 'sw', 'bnt'],
+    en: ['en-ZA', 'en-NG', 'en-KE', 'en-GB', 'en-US', 'en'],
   };
 
   const candidatePrefixes = prefixMap[langCode] || [langCode];
@@ -71,24 +115,36 @@ function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null 
     if (exact) return exact;
   }
 
-  // 2. Prefix match on language tag
+  // 2. Prefix match on language tag (excluding pt-BR when looking for Portuguese)
   for (const prefix of candidatePrefixes) {
-    const partial = voices.find((v) => v.lang.toLowerCase().startsWith(prefix.toLowerCase()));
+    const partial = voices.find((v) => {
+      const vLang = v.lang.toLowerCase();
+      if (langCode === 'pt' && (vLang === 'pt-br' || vLang.startsWith('pt-br'))) {
+        return false; // Skip Brazilian Portuguese in favor of European/African Portuguese
+      }
+      return vLang.startsWith(prefix.toLowerCase());
+    });
     if (partial) return partial;
   }
 
-  // 3. Name match on voice name (e.g. "French", "Français", "Portuguese", "Português", "Swahili", "Kiswahili")
+  // 3. Name match on voice name
   const nameKeywords: Record<string, string[]> = {
-    fr: ['french', 'français', 'hortense', 'julie'],
-    pt: ['portuguese', 'português', 'maria', 'helia'],
-    sw: ['swahili', 'kiswahili'],
-    en: ['english', 'david', 'zira', 'mark', 'george'],
+    fr: ['african french', 'français', 'french', 'hortense', 'julie', 'paul'],
+    pt: ['portugal', 'português (portugal)', 'angola', 'moçambique', 'portuguese (portugal)', 'helia', 'raquel', 'duarte'],
+    sw: ['swahili', 'kiswahili', 'kenya', 'tanzania', 'zuri', 'rafiki'],
+    en: ['south africa', 'nigeria', 'kenya', 'english (south africa)', 'english (united kingdom)', 'david', 'zira', 'mark'],
   };
 
   const keywords = nameKeywords[langCode] || [];
   for (const kw of keywords) {
     const match = voices.find((v) => v.name.toLowerCase().includes(kw));
     if (match) return match;
+  }
+
+  // 4. Fallback for Portuguese: if no pt-PT voice found, then allow any pt voice
+  if (langCode === 'pt') {
+    const anyPt = voices.find((v) => v.lang.toLowerCase().startsWith('pt'));
+    if (anyPt) return anyPt;
   }
 
   return null;
@@ -107,23 +163,28 @@ export function createSpeechSynthesisController(): SpeechSynthesisController {
       const cleanText = cleanTextForSpeech(text);
       if (!cleanText) return;
 
+      const speechReadyText = prepareAcronymsForSpeech(cleanText, langCode);
+
       // Cancel previous utterance to prevent queue pile-up during real-time speech
       window.speechSynthesis.cancel();
 
-      const utterance = new SpeechSynthesisUtterance(cleanText);
+      const utterance = new SpeechSynthesisUtterance(speechReadyText);
       const voice = getBestVoiceForLanguage(langCode);
       if (voice) {
         utterance.voice = voice;
       }
 
+      // Regional dialect tags for speech synthesis
       const langMap: Record<string, string> = {
         fr: 'fr-FR',
-        pt: 'pt-PT',
-        sw: 'sw-KE',
-        en: 'en-US',
+        pt: 'pt-PT', // European/PALOP African Portuguese
+        sw: 'sw-KE', // East African Swahili
+        en: 'en-ZA', // African English
       };
       utterance.lang = langMap[langCode] || langCode;
-      utterance.rate = 1.0;
+
+      // Measured cadence for conference terminology clarity
+      utterance.rate = 0.93;
       utterance.pitch = 1.0;
 
       window.speechSynthesis.speak(utterance);

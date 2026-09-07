@@ -10,6 +10,7 @@
 
 import { GLOSSARY_TERMS } from './demo-data';
 import type { GlossaryTerm } from './types';
+import { normalizeMedicalSpeech } from './speech-recognition';
 
 const API_KEY_STORAGE_KEY = 'vacfa_gemini_api_key';
 const MODEL_NAME_STORAGE_KEY = 'vacfa_gemini_model';
@@ -119,8 +120,8 @@ export async function translateText(
   sourceLang?: string,
   activeGlossary: GlossaryTerm[] = GLOSSARY_TERMS
 ): Promise<TranslationResult> {
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const normalized = normalizeMedicalSpeech(text.trim());
+  if (!normalized) {
     return {
       originalText: '',
       sourceLang: sourceLang || 'en',
@@ -130,16 +131,16 @@ export async function translateText(
     };
   }
 
-  const detectedSource = sourceLang || detectLanguage(trimmed);
-  const detectedTerms = detectGlossaryTerms(trimmed, activeGlossary);
+  const detectedSource = sourceLang || detectLanguage(normalized);
+  const detectedTerms = detectGlossaryTerms(normalized, activeGlossary);
   const apiKey = getStoredApiKey();
 
   // 1. Try Google Gemini API if API key is provided
   if (apiKey) {
     try {
-      const geminiResult = await callGeminiApi(trimmed, detectedSource, activeGlossary, apiKey);
+      const geminiResult = await callGeminiApi(normalized, detectedSource, activeGlossary, apiKey);
       return {
-        originalText: trimmed,
+        originalText: normalized,
         sourceLang: detectedSource,
         translations: geminiResult.translations,
         glossaryTerms: Array.from(new Set([...detectedTerms, ...geminiResult.glossaryTerms])),
@@ -152,11 +153,11 @@ export async function translateText(
 
   // 2. Real-time translation via public translation API with glossary enforcement
   try {
-    const translations = await translateWithPublicApi(trimmed, detectedSource);
+    const translations = await translateWithPublicApi(normalized, detectedSource);
     const enforcedTranslations = enforceMedicalGlossary(translations, detectedSource, activeGlossary);
 
     return {
-      originalText: trimmed,
+      originalText: normalized,
       sourceLang: detectedSource,
       translations: enforcedTranslations,
       glossaryTerms: detectedTerms,
@@ -164,9 +165,9 @@ export async function translateText(
     };
   } catch {
     // 3. Fallback dictionary
-    const fallback = offlineDictionaryTranslate(trimmed, detectedSource, activeGlossary);
+    const fallback = offlineDictionaryTranslate(normalized, detectedSource, activeGlossary);
     return {
-      originalText: trimmed,
+      originalText: normalized,
       sourceLang: detectedSource,
       translations: fallback,
       glossaryTerms: detectedTerms,

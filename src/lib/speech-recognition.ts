@@ -28,14 +28,39 @@ export interface SpeechRecognitionController {
 }
 
 /**
+ * Normalizes speech recognition phonetic ambiguities for specialized African vaccine,
+ * epidemiological, and health economics acronyms and terminology.
+ * 
+ * E.g., ensures "night tag" or "nit tag" -> "NITAG", "right tag" -> "RITAG",
+ * "garvey" -> "Gavi", "a e f i" -> "AEFI", "v v m" -> "VVM", etc.
+ */
+export function normalizeMedicalSpeech(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\b(night\s*tag|nit\s*tag|knit\s*tag|knight\s*tag|nytag|ni\s*tag|nite\s*tag)\b/gi, 'NITAG')
+    .replace(/\b(right\s*tag|rytag|ri\s*tag|write\s*tag)\b/gi, 'RITAG')
+    .replace(/\b(a\s*e\s*f\s*i|affy)\b/gi, 'AEFI')
+    .replace(/\b(e\s*p\s*i)\b/gi, 'EPI')
+    .replace(/\b(v\s*v\s*m|vbm)\b/gi, 'VVM')
+    .replace(/\b(garvey|garve|gavy|gabi)\b/gi, 'Gavi')
+    .replace(/\b(m\s*r\s*n\s*a)\b/gi, 'mRNA')
+    .replace(/\b(zero\s*dose|0\s*dose)\b/gi, 'zero-dose')
+    .replace(/\b(i\s*c\s*e\s*r|eye\s*ser)\b/gi, 'ICER')
+    .replace(/\b(d\s*a\s*l\s*y|dah\s*lee)\b/gi, 'DALY')
+    .replace(/\b(q\s*a\s*l\s*y|kwah\s*lee)\b/gi, 'QALY')
+    .replace(/\b(h\s*t\s*a)\b/gi, 'HTA')
+    .replace(/\b(c\s*e\s*a)\b/gi, 'CEA');
+}
+
+/**
  * Creates an instance of the live speech recognition controller.
  * 
  * @param callbacks Event handlers for transcripts, volume, and errors.
- * @param initialLang BCP-47 language tag (e.g. 'en-US', 'fr-FR', 'pt-PT', 'sw-KE').
+ * @param initialLang BCP-47 language tag (default: 'en-ZA' for African English accents).
  */
 export function createSpeechRecognitionController(
   callbacks: SpeechRecognitionCallbacks,
-  initialLang = 'en-US'
+  initialLang = 'en-ZA'
 ): SpeechRecognitionController {
   let recognition: any = null;
   let isListeningState = false;
@@ -129,7 +154,7 @@ export function createSpeechRecognitionController(
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         const item = event.results[i];
-        const text = item[0].transcript;
+        const text = normalizeMedicalSpeech(item[0].transcript);
         if (item.isFinal) {
           callbacks.onFinalResult?.(text.trim());
         } else {
@@ -213,10 +238,10 @@ export function createSpeechRecognitionController(
 
     setLanguage(langCode: string): void {
       const mapping: Record<string, string> = {
-        en: 'en-US',
+        en: 'en-ZA', // Tuned for African English accents (South Africa, Kenya, Nigeria, Ghana)
         fr: 'fr-FR',
-        pt: 'pt-PT',
-        sw: 'sw-KE',
+        pt: 'pt-PT', // Tuned for African Lusophone Portuguese (Angola, Mozambique)
+        sw: 'sw-KE', // Tuned for East African Swahili (Kenya, Tanzania)
       };
       activeLang = mapping[langCode] || langCode;
       if (recognition) {

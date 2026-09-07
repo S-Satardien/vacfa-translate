@@ -140,9 +140,10 @@ export const AiConfigModal: React.FC<AiConfigModalProps> = ({ isOpen, onClose, o
               outline: 'none',
             }}
           >
-            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Fastest & Stable)</option>
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash (Next-Gen Multilingual)</option>
+            <option value="gemini-3.5-flash">Gemini 3.5 Flash (State-of-the-Art Multilingual)</option>
             <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+            <option value="gemini-flash-latest">Gemini Flash (Latest)</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
           </select>
         </div>
 

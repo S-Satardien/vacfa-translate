@@ -27,8 +27,10 @@ export interface TranslationResult {
  * Retrieves the stored Gemini API key from browser local storage.
  */
 export function getStoredApiKey(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+  const local = localStorage.getItem(API_KEY_STORAGE_KEY);
+  if (local) return local;
+  return process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
 }
 
 /**
@@ -49,8 +51,8 @@ export function setStoredApiKey(key: string): void {
  * Retrieves the preferred Gemini model name.
  */
 export function getStoredModel(): string {
-  if (typeof window === 'undefined') return 'gemini-1.5-flash';
-  return localStorage.getItem(MODEL_NAME_STORAGE_KEY) || 'gemini-1.5-flash';
+  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash';
+  return localStorage.getItem(MODEL_NAME_STORAGE_KEY) || process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash';
 }
 
 /**

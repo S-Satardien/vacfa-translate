@@ -12,7 +12,22 @@ interface SpeechSynthesisController {
   isSupported: () => boolean;
 }
 
-let activeUtterance: SpeechSynthesisUtterance | null = null;
+let cachedVoices: SpeechSynthesisVoice[] = [];
+
+/**
+ * Loads available browser speech synthesis voices.
+ */
+function loadVoices(): void {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  cachedVoices = window.speechSynthesis.getVoices();
+}
+
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  loadVoices();
+  window.speechSynthesis.onvoiceschanged = () => {
+    loadVoices();
+  };
+}
 
 /**
  * Strips bracket indicators, glossary markers, and HTML tags from text for clean TTS pronunciation.
@@ -35,24 +50,45 @@ function cleanTextForSpeech(text: string): string {
 function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null {
   if (typeof window === 'undefined' || !window.speechSynthesis) return null;
 
-  const voices = window.speechSynthesis.getVoices();
+  if (cachedVoices.length === 0) {
+    loadVoices();
+  }
+  const voices = cachedVoices.length > 0 ? cachedVoices : window.speechSynthesis.getVoices();
+  if (!voices || voices.length === 0) return null;
+
   const prefixMap: Record<string, string[]> = {
-    fr: ['fr-FR', 'fr-CA', 'fr'],
+    fr: ['fr-FR', 'fr-CA', 'fr-BE', 'fr-CH', 'fr'],
     pt: ['pt-PT', 'pt-BR', 'pt'],
-    sw: ['sw-KE', 'sw-TZ', 'sw'],
-    en: ['en-US', 'en-GB', 'en-ZA', 'en'],
+    sw: ['sw-KE', 'sw-TZ', 'sw', 'bnt'],
+    en: ['en-US', 'en-GB', 'en-ZA', 'en-AU', 'en'],
   };
 
   const candidatePrefixes = prefixMap[langCode] || [langCode];
 
+  // 1. Exact match on language tag
   for (const prefix of candidatePrefixes) {
     const exact = voices.find((v) => v.lang.toLowerCase() === prefix.toLowerCase());
     if (exact) return exact;
   }
 
+  // 2. Prefix match on language tag
   for (const prefix of candidatePrefixes) {
     const partial = voices.find((v) => v.lang.toLowerCase().startsWith(prefix.toLowerCase()));
     if (partial) return partial;
+  }
+
+  // 3. Name match on voice name (e.g. "French", "Français", "Portuguese", "Português", "Swahili", "Kiswahili")
+  const nameKeywords: Record<string, string[]> = {
+    fr: ['french', 'français', 'hortense', 'julie'],
+    pt: ['portuguese', 'português', 'maria', 'helia'],
+    sw: ['swahili', 'kiswahili'],
+    en: ['english', 'david', 'zira', 'mark', 'george'],
+  };
+
+  const keywords = nameKeywords[langCode] || [];
+  for (const kw of keywords) {
+    const match = voices.find((v) => v.name.toLowerCase().includes(kw));
+    if (match) return match;
   }
 
   return null;
@@ -71,7 +107,7 @@ export function createSpeechSynthesisController(): SpeechSynthesisController {
       const cleanText = cleanTextForSpeech(text);
       if (!cleanText) return;
 
-      // Cancel previous utterance to avoid latency lag during fast speech
+      // Cancel previous utterance to prevent queue pile-up during real-time speech
       window.speechSynthesis.cancel();
 
       const utterance = new SpeechSynthesisUtterance(cleanText);
@@ -90,25 +126,12 @@ export function createSpeechSynthesisController(): SpeechSynthesisController {
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
-      activeUtterance = utterance;
-      utterance.onend = () => {
-        if (activeUtterance === utterance) {
-          activeUtterance = null;
-        }
-      };
-      utterance.onerror = () => {
-        if (activeUtterance === utterance) {
-          activeUtterance = null;
-        }
-      };
-
       window.speechSynthesis.speak(utterance);
     },
 
     stop(): void {
       if (!isSupported) return;
       window.speechSynthesis.cancel();
-      activeUtterance = null;
     },
 
     isSpeaking(): boolean {

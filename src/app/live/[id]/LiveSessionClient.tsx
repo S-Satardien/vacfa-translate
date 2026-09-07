@@ -118,7 +118,7 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
       setCurrentSpeaker(speakerName);
 
       try {
-        const result = await translateText(finalTranscript, 'en', activeGlossary);
+        const result = await translateText(finalTranscript, undefined, activeGlossary);
 
         const newEntry: CaptionEntry = {
           id: `live-cap-${Date.now()}`,
@@ -468,9 +468,7 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
                   <div className={styles.originalText}>{cap.originalText}</div>
                   <div className={styles.translatedText}>
                     {renderTextWithGlossary(
-                      captionLang === 'en'
-                        ? cap.originalText
-                        : cap.translations?.[captionLang] || cap.originalText,
+                      cap.translations?.[captionLang] || cap.originalText,
                       cap.glossaryTerms
                     )}
                   </div>

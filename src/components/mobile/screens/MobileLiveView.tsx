@@ -106,7 +106,7 @@ export function MobileLiveView({
         setLiveSpeaker(speakerName);
 
         const glossary = getActiveSessionGlossary();
-        const res = await translateText(finalText, 'en', glossary);
+        const res = await translateText(finalText, undefined, glossary);
 
         const newEntry: CaptionEntry = {
           id: `live-mobile-cap-${Date.now()}`,
@@ -266,9 +266,7 @@ export function MobileLiveView({
               <div key={i} className={styles.captionItem}>
                 <span className={styles.speakerName}>{cap.speaker}</span>
                 <p className={styles.captionText}>
-                  {captionLanguage.code === 'en' 
-                    ? cap.originalText 
-                    : (cap.translations?.[captionLanguage.code] || cap.originalText)}
+                  {cap.translations?.[captionLanguage.code] || cap.originalText}
                 </p>
               </div>
             ))}

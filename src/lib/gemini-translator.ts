@@ -1,10 +1,11 @@
 /**
- * VACFA Translate — Google Gemini AI Translation Engine
+ * VACFA Translate — Real-Time Translation & Medical Glossary Engine
  * 
  * Provides real-time bidirectional translation (English, French, Portuguese, Swahili)
  * with direct injection of the VACFA Medical Glossary into prompt context.
- * Supports direct Gemini API calls with graceful fallback to an offline medical
- * translation engine when no API key is provided.
+ * Supports direct Gemini API calls when an API key is configured,
+ * and automatically utilizes public translation APIs with glossary enforcement
+ * when running in zero-setup mode.
  */
 
 import { GLOSSARY_TERMS } from './demo-data';
@@ -60,6 +61,25 @@ export function setStoredModel(model: string): void {
 }
 
 /**
+ * Detects the probable language of the input text based on common vocabulary patterns.
+ * 
+ * @param text The input text string.
+ */
+export function detectLanguage(text: string): 'en' | 'fr' | 'pt' | 'sw' {
+  const t = ' ' + text.toLowerCase() + ' ';
+  if (/\b(je|j'|le|la|les|nous|vous|pour|avec|dans|est|sont|vaccin|merci|bonjour|comment|salut)\b/.test(t)) {
+    return 'fr';
+  }
+  if (/\b(eu|voce|você|para|com|em|não|sao|são|vacina|ola|olá|bom|boa|obrigado|muito)\b/.test(t)) {
+    return 'pt';
+  }
+  if (/\b(habari|jina|sasa|kwa|katika|chanjo|wote|yake|asante|karibu|jambo|sana|leo)\b/.test(t)) {
+    return 'sw';
+  }
+  return 'en';
+}
+
+/**
  * Finds all glossary terms that appear in the given text.
  * 
  * @param text The text to scan.
@@ -76,7 +96,7 @@ export function detectGlossaryTerms(text: string, terms: GlossaryTerm[] = GLOSSA
     }
     // Also check known translations
     for (const trans of Object.values(item.translations)) {
-      if (lower.includes(trans.toLowerCase())) {
+      if (trans && lower.includes(trans.toLowerCase())) {
         detected.push(item.term);
         break;
       }
@@ -87,55 +107,72 @@ export function detectGlossaryTerms(text: string, terms: GlossaryTerm[] = GLOSSA
 }
 
 /**
- * Translates speech text across session languages using Gemini Flash or the offline medical engine.
+ * Translates speech text across all session languages using Gemini Flash or public translation API,
+ * strictly enforcing the approved VACFA Medical Glossary.
  * 
  * @param text Spoken sentence or phrase.
- * @param sourceLang Source language code (default: 'en').
+ * @param sourceLang Optional source language override. If not specified, auto-detected.
  * @param activeGlossary Current glossary terms including any dynamic delegate contributions.
  */
 export async function translateText(
   text: string,
-  sourceLang = 'en',
+  sourceLang?: string,
   activeGlossary: GlossaryTerm[] = GLOSSARY_TERMS
 ): Promise<TranslationResult> {
   const trimmed = text.trim();
   if (!trimmed) {
     return {
       originalText: '',
-      sourceLang,
+      sourceLang: sourceLang || 'en',
       translations: { en: '', fr: '', pt: '', sw: '' },
       glossaryTerms: [],
       provider: 'smart-fallback',
     };
   }
 
+  const detectedSource = sourceLang || detectLanguage(trimmed);
   const detectedTerms = detectGlossaryTerms(trimmed, activeGlossary);
   const apiKey = getStoredApiKey();
 
+  // 1. Try Google Gemini API if API key is provided
   if (apiKey) {
     try {
-      const geminiResult = await callGeminiApi(trimmed, sourceLang, activeGlossary, apiKey);
+      const geminiResult = await callGeminiApi(trimmed, detectedSource, activeGlossary, apiKey);
       return {
         originalText: trimmed,
-        sourceLang,
+        sourceLang: detectedSource,
         translations: geminiResult.translations,
         glossaryTerms: Array.from(new Set([...detectedTerms, ...geminiResult.glossaryTerms])),
         provider: 'gemini',
       };
     } catch {
-      // If Gemini call fails (e.g. rate limit or network error), gracefully fall back
+      // Fall through to public translation engine
     }
   }
 
-  // Fallback offline engine
-  const fallbackTranslations = offlineSmartTranslate(trimmed, sourceLang, activeGlossary);
-  return {
-    originalText: trimmed,
-    sourceLang,
-    translations: fallbackTranslations,
-    glossaryTerms: detectedTerms,
-    provider: 'smart-fallback',
-  };
+  // 2. Real-time translation via public translation API with glossary enforcement
+  try {
+    const translations = await translateWithPublicApi(trimmed, detectedSource);
+    const enforcedTranslations = enforceMedicalGlossary(translations, detectedSource, activeGlossary);
+
+    return {
+      originalText: trimmed,
+      sourceLang: detectedSource,
+      translations: enforcedTranslations,
+      glossaryTerms: detectedTerms,
+      provider: 'smart-fallback',
+    };
+  } catch {
+    // 3. Fallback dictionary
+    const fallback = offlineDictionaryTranslate(trimmed, detectedSource, activeGlossary);
+    return {
+      originalText: trimmed,
+      sourceLang: detectedSource,
+      translations: fallback,
+      glossaryTerms: detectedTerms,
+      provider: 'smart-fallback',
+    };
+  }
 }
 
 /**
@@ -151,7 +188,7 @@ async function callGeminiApi(
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const glossarySnippet = glossary
-    .slice(0, 30)
+    .slice(0, 35)
     .map((g) => `${g.term} -> [FR: ${g.translations.fr || ''}, PT: ${g.translations.pt || ''}, SW: ${g.translations.sw || ''}]`)
     .join('\n');
 
@@ -216,75 +253,200 @@ Respond ONLY with valid JSON matching this schema:
 }
 
 /**
- * Intelligent offline medical translation engine.
- * Generates accurate, natural medical translations based on vocabulary rules,
- * glossary mappings, and contextual phrase templates.
+ * Translates text into target languages using the public translation API.
  */
-function offlineSmartTranslate(
+async function translateWithPublicApi(
   text: string,
-  sourceLang: string,
-  glossary: GlossaryTerm[]
-): Record<string, string> {
-  const translations: Record<string, string> = {
+  sourceLang: string
+): Promise<Record<string, string>> {
+  const targetLangs: Array<'en' | 'fr' | 'pt' | 'sw'> = ['en', 'fr', 'pt', 'sw'];
+  const results: Record<string, string> = {
     en: text,
     fr: text,
     pt: text,
     sw: text,
   };
 
-  // 1. Common conference phrase dictionary
-  const phraseDictionary: Record<string, { fr: string; pt: string; sw: string; en?: string }> = {
-    'good morning': { fr: 'Bonjour à tous', pt: 'Bom dia a todos', sw: 'Habari za asubuhi wote' },
-    'welcome to the conference': { fr: 'Bienvenue à la conférence', pt: 'Bem-vindo à conferência', sw: 'Karibuni kwenye mkutano' },
-    'thank you': { fr: 'Merci beaucoup', pt: 'Muito obrigado', sw: 'Asante sana' },
-    'today we will discuss': { fr: 'Aujourd\'hui nous allons discuter', pt: 'Hoje vamos discutir', sw: 'Leo tutajadili' },
-    'clinical trial': { fr: 'essai clinique', pt: 'ensaio clínico', sw: 'jaribio la kimatibabu' },
-    'public health': { fr: 'santé publique', pt: 'saúde pública', sw: 'afya ya umma' },
-    'immunization campaign': { fr: 'campagne de vaccination', pt: 'campanha de imunização', sw: 'kampeni ya chanjo' },
-    'dose': { fr: 'dose', pt: 'dose', sw: 'dozi' },
-    'vaccine': { fr: 'vaccin', pt: 'vacina', sw: 'chanjo' },
-    'health': { fr: 'santé', pt: 'saúde', sw: 'afya' },
-    'rural communities': { fr: 'communautés rurales', pt: 'comunidades rurais', sw: 'jamii za vijijini' },
-    'in sub-saharan africa': { fr: 'en Afrique subsaharienne', pt: 'na África Subsaariana', sw: 'katika Afrika Kusini mwa Jangwa la Sahara' },
+  const requests = targetLangs.map(async (target) => {
+    if (target === sourceLang) {
+      results[target] = text;
+      return;
+    }
+
+    try {
+      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${target}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const translated = data?.responseData?.translatedText;
+        if (translated && !translated.toUpperCase().includes('MYMEMORY WARNING') && !translated.toUpperCase().includes('IS AN INVALID')) {
+          results[target] = translated;
+          return;
+        }
+      }
+    } catch {
+      // Ignore network error and fall back
+    }
+
+    // Fallback: Swahili dictionary if API quota exceeded
+    if (target === 'sw') {
+      results[target] = fallbackTranslateToSwahili(text);
+    } else if (target === 'fr') {
+      results[target] = fallbackTranslateToFrench(text);
+    } else if (target === 'pt') {
+      results[target] = fallbackTranslateToPortuguese(text);
+    }
+  });
+
+  await Promise.all(requests);
+  return results;
+}
+
+/**
+ * Replaces any detected medical terms in the translated outputs with the official VACFA glossary translations.
+ */
+function enforceMedicalGlossary(
+  translations: Record<string, string>,
+  sourceLang: string,
+  glossary: GlossaryTerm[]
+): Record<string, string> {
+  const enforced = { ...translations };
+
+  for (const term of glossary) {
+    const sourceWord = term.translations[sourceLang] || term.term;
+    const regex = new RegExp(`\\b${escapeRegExp(sourceWord)}\\b`, 'gi');
+
+    for (const [lang, transText] of Object.entries(enforced)) {
+      if (lang === sourceLang) continue;
+      const targetTerm = term.translations[lang];
+      if (targetTerm && transText.toLowerCase().includes(sourceWord.toLowerCase())) {
+        enforced[lang] = transText.replace(regex, targetTerm);
+      }
+    }
+  }
+
+  return enforced;
+}
+
+/**
+ * Escapes special regex characters in search strings.
+ */
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Fallback translation helper for Swahili when offline.
+ */
+function fallbackTranslateToSwahili(text: string): string {
+  const dictionary: Record<string, string> = {
+    'good morning': 'habari za asubuhi',
+    'good afternoon': 'habari za mchana',
+    'welcome': 'karibu',
+    'welcome everyone': 'karibuni wote',
+    'thank you': 'asante',
+    'thank you very much': 'asante sana',
+    'today': 'leo',
+    'we will discuss': 'tutajadili',
+    'vaccine': 'chanjo',
+    'vaccines': 'chanjo',
+    'cold chain': 'mfumo wa baridi',
+    'immunization': 'kinga',
+    'health': 'afya',
+    'public health': 'afya ya umma',
+    'hospital': 'hospitali',
+    'doctor': 'daktari',
+    'clinical trial': 'jaribio la kimatibabu',
+    'dose': 'dozi',
+    'booster dose': 'dozi ya nyongeza',
+    'surveillance': 'ufuatiliaji',
+    'my name is': 'jina langu ni',
+    'conference': 'mkutano',
+    'the captions': 'maelezo mafupi',
+    'talking': 'kuzungumza',
   };
 
-  // 2. Apply medical glossary term replacements
-  for (const targetLang of ['fr', 'pt', 'sw'] as const) {
-    let converted = text;
-
-    // Apply known phrases
-    for (const [phrase, dict] of Object.entries(phraseDictionary)) {
-      const reg = new RegExp(phrase, 'gi');
-      converted = converted.replace(reg, dict[targetLang]);
-    }
-
-    // Apply glossary terms
-    for (const item of glossary) {
-      const termTranslation = item.translations[targetLang];
-      if (termTranslation) {
-        const regex = new RegExp(`\\b${item.term}\\b`, 'gi');
-        converted = converted.replace(regex, termTranslation);
-      }
-    }
-
-    // Add localized prefix/suffix if the sentence had no specific match to indicate translation
-    if (converted === text && text.length > 5) {
-      if (targetLang === 'fr') {
-        converted = `[FR] ${text}`;
-      } else if (targetLang === 'pt') {
-        converted = `[PT] ${text}`;
-      } else if (targetLang === 'sw') {
-        converted = `[SW] ${text}`;
-      }
-    }
-
-    translations[targetLang] = converted;
+  let translated = text;
+  for (const [en, sw] of Object.entries(dictionary)) {
+    const reg = new RegExp(`\\b${en}\\b`, 'gi');
+    translated = translated.replace(reg, sw);
   }
+  return translated;
+}
 
-  // Ensure source language matches input
-  if (sourceLang in translations) {
-    translations[sourceLang] = text;
+/**
+ * Fallback translation helper for French when offline.
+ */
+function fallbackTranslateToFrench(text: string): string {
+  const dictionary: Record<string, string> = {
+    'good morning': 'bonjour',
+    'welcome': 'bienvenue',
+    'thank you': 'merci',
+    'today': 'aujourd\'hui',
+    'vaccine': 'vaccin',
+    'vaccines': 'vaccins',
+    'cold chain': 'chaîne du froid',
+    'immunization': 'immunisation',
+    'health': 'santé',
+    'public health': 'santé publique',
+    'clinical trial': 'essai clinique',
+    'dose': 'dose',
+    'my name is': 'je m\'appelle',
+    'conference': 'conférence',
+  };
+
+  let translated = text;
+  for (const [en, fr] of Object.entries(dictionary)) {
+    const reg = new RegExp(`\\b${en}\\b`, 'gi');
+    translated = translated.replace(reg, fr);
   }
+  return translated;
+}
 
-  return translations;
+/**
+ * Fallback translation helper for Portuguese when offline.
+ */
+function fallbackTranslateToPortuguese(text: string): string {
+  const dictionary: Record<string, string> = {
+    'good morning': 'bom dia',
+    'welcome': 'bem-vindo',
+    'thank you': 'obrigado',
+    'today': 'hoje',
+    'vaccine': 'vacina',
+    'vaccines': 'vacinas',
+    'cold chain': 'cadeia de frio',
+    'immunization': 'imunização',
+    'health': 'saúde',
+    'public health': 'saúde pública',
+    'clinical trial': 'ensaio clínico',
+    'dose': 'dose',
+    'my name is': 'meu nome é',
+    'conference': 'conferência',
+  };
+
+  let translated = text;
+  for (const [en, pt] of Object.entries(dictionary)) {
+    const reg = new RegExp(`\\b${en}\\b`, 'gi');
+    translated = translated.replace(reg, pt);
+  }
+  return translated;
+}
+
+/**
+ * Offline dictionary translation fallback.
+ */
+function offlineDictionaryTranslate(
+  text: string,
+  sourceLang: string,
+  glossary: GlossaryTerm[]
+): Record<string, string> {
+  const translations: Record<string, string> = {
+    en: text,
+    fr: fallbackTranslateToFrench(text),
+    pt: fallbackTranslateToPortuguese(text),
+    sw: fallbackTranslateToSwahili(text),
+  };
+
+  translations[sourceLang] = text;
+  return enforceMedicalGlossary(translations, sourceLang, glossary);
 }

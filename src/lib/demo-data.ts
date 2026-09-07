@@ -261,6 +261,19 @@ export const GLOSSARY_TERMS: GlossaryTerm[] = [
     contributor: 'vacfa',
   },
   {
+    id: 'term-011b',
+    term: 'NISH',
+    category: 'policy',
+    translations: {
+      fr: "NISH (Centre d'appui aux NITAG / Hub d'appui aux GTCV)",
+      pt: 'NISH (Centro de Apoio aos NITAG)',
+      sw: 'NISH (Kituo cha Usaidizi cha NITAG)',
+    },
+    phonetic: 'nish',
+    context: 'NITAG Support Hub — hosted by VACFA at the University of Cape Town to provide technical assistance, evidence synthesis, and capacity building to National Immunization Technical Advisory Groups across Africa.',
+    contributor: 'vacfa',
+  },
+  {
     id: 'term-012',
     term: 'RITAG',
     category: 'policy',

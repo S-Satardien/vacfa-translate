@@ -38,6 +38,7 @@ export function normalizeMedicalSpeech(text: string): string {
   if (!text) return '';
   return text
     .replace(/\b(night\s*tag|nit\s*tag|knit\s*tag|knight\s*tag|nytag|ni\s*tag|nite\s*tag)\b/gi, 'NITAG')
+    .replace(/\b(niche|nish|n\s*i\s*s\s*h)\b/gi, 'NISH')
     .replace(/\b(right\s*tag|rytag|ri\s*tag|write\s*tag)\b/gi, 'RITAG')
     .replace(/\b(a\s*e\s*f\s*i|affy)\b/gi, 'AEFI')
     .replace(/\b(e\s*p\s*i)\b/gi, 'EPI')

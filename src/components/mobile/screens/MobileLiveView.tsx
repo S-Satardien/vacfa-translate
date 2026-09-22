@@ -6,7 +6,7 @@ import { Globe, Volume2, VolumeX, Mic, MicOff } from 'lucide-react';
 import styles from './MobileLiveView.module.css';
 import { useCaptionSimulator } from '../hooks/useCaptionSimulator';
 import type { Language, CaptionEntry } from '@/lib/types';
-import { createSpeechSynthesisController } from '@/lib/speech-synthesis';
+import { createSpeechSynthesisController, unlockAudioPlayback } from '@/lib/speech-synthesis';
 import { subscribeToLiveSync, broadcastCaptionFinal, broadcastCaptionInterim, broadcastMicStatus, getActiveSessionGlossary } from '@/lib/live-sync';
 import { createSpeechRecognitionController } from '@/lib/speech-recognition';
 import { translateText } from '@/lib/gemini-translator';
@@ -37,6 +37,7 @@ export function MobileLiveView({
   // Audio listening (TTS) state — muted by default per user specification
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const ttsRef = useRef<ReturnType<typeof createSpeechSynthesisController> | null>(null);
+  const playedCaptionIdsRef = useRef<Set<string>>(new Set());
 
   // Presenter mic state for mobile
   const [isMobileMicActive, setIsMobileMicActive] = useState(false);
@@ -60,10 +61,14 @@ export function MobileLiveView({
     };
   }, []);
 
-  // Audio playback handler
+  // Audio playback handler with duplicate protection
   const playAudio = useCallback(
-    (text: string) => {
+    (text: string, captionId?: string) => {
       if (isAudioMuted || !ttsRef.current) return;
+      if (captionId) {
+        if (playedCaptionIdsRef.current.has(captionId)) return;
+        playedCaptionIdsRef.current.add(captionId);
+      }
       ttsRef.current.speak(text, language.code);
     },
     [isAudioMuted, language.code]
@@ -76,7 +81,7 @@ export function MobileLiveView({
         setLiveCaptions((prev) => [...prev, caption]);
         setLiveInterimText('');
         const textToSpeak = caption.translations?.[language.code] || caption.originalText;
-        playAudio(textToSpeak);
+        playAudio(textToSpeak, caption.id);
       },
       onCaptionInterim: ({ speaker, text }) => {
         setLiveSpeaker(speaker);
@@ -105,21 +110,36 @@ export function MobileLiveView({
         const speakerName = 'Presenter (Mobile)';
         setLiveSpeaker(speakerName);
 
+        const captionId = `live-mobile-cap-${Date.now()}`;
+        // 1. Instant optimistic render (0ms delay)
+        const initialEntry: CaptionEntry = {
+          id: captionId,
+          speaker: speakerName,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          originalText: finalText,
+          translations: {
+            en: finalText,
+            fr: '...',
+            pt: '...',
+            sw: '...',
+          },
+          glossaryTerms: [],
+        };
+
+        setLiveCaptions((prev) => [...prev, initialEntry]);
+
         const glossary = getActiveSessionGlossary();
         const res = await translateText(finalText, undefined, glossary);
 
         const newEntry: CaptionEntry = {
-          id: `live-mobile-cap-${Date.now()}`,
-          speaker: speakerName,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          originalText: res.originalText,
+          ...initialEntry,
           translations: res.translations,
           glossaryTerms: res.glossaryTerms,
         };
 
-        setLiveCaptions((prev) => [...prev, newEntry]);
+        setLiveCaptions((prev) => prev.map((c) => (c.id === captionId ? newEntry : c)));
         broadcastCaptionFinal(newEntry);
-        playAudio(newEntry.translations[language.code] || newEntry.originalText);
+        playAudio(newEntry.translations[language.code] || newEntry.originalText, newEntry.id);
       },
       onAudioLevel: (level) => {
         setAudioLevel(level);
@@ -156,11 +176,17 @@ export function MobileLiveView({
     captionsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [simText, simCaptions, liveCaptions, liveInterimText]);
 
+  // Reset deduplication cache when listener changes their audio language
+  useEffect(() => {
+    playedCaptionIdsRef.current.clear();
+  }, [language.code]);
+
   // Toggle mobile mic
   const toggleMobileMic = async () => {
     if (isMobileMicActive) {
       mobileRecognizerRef.current?.stop();
     } else {
+      unlockAudioPlayback();
       stopSim();
       await mobileRecognizerRef.current?.start();
     }
@@ -305,9 +331,13 @@ export function MobileLiveView({
                 setIsAudioMuted(next);
                 if (next) {
                   ttsRef.current?.stop();
-                } else if (displayCaptions.length > 0) {
-                  const last = displayCaptions[displayCaptions.length - 1];
-                  playAudio(last.translations?.[language.code] || last.originalText);
+                } else {
+                  unlockAudioPlayback();
+                  playedCaptionIdsRef.current.clear();
+                  if (displayCaptions.length > 0) {
+                    const last = displayCaptions[displayCaptions.length - 1];
+                    playAudio(last.translations?.[language.code] || last.originalText);
+                  }
                 }
               }}
               style={{
@@ -330,7 +360,11 @@ export function MobileLiveView({
             </button>
 
             <button 
-              onClick={onChangeLanguage}
+              onClick={() => {
+                unlockAudioPlayback();
+                playedCaptionIdsRef.current.clear();
+                onChangeLanguage();
+              }}
               style={{ 
                 backgroundColor: 'var(--surface-primary)', 
                 padding: '0.5rem 1rem', 
@@ -357,7 +391,10 @@ export function MobileLiveView({
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             {showCaptions && (
               <button 
-                onClick={onChangeLanguage}
+                onClick={() => {
+                  unlockAudioPlayback();
+                  onChangeLanguage();
+                }}
                 style={{ 
                   backgroundColor: 'var(--surface-primary)', 
                   padding: '0.5rem 1rem', 

@@ -14,6 +14,7 @@ import { normalizeMedicalSpeech } from './speech-recognition';
 
 const API_KEY_STORAGE_KEY = 'vacfa_gemini_api_key';
 const MODEL_NAME_STORAGE_KEY = 'vacfa_gemini_model';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
 
 export interface TranslationResult {
   originalText: string;
@@ -24,10 +25,26 @@ export interface TranslationResult {
 }
 
 /**
- * Retrieves the stored Gemini API key from browser local storage.
+ * Retrieves the stored Gemini API key from browser local storage, URL param, or environment variable.
  */
 export function getStoredApiKey(): string {
   if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+
+  // Check if key was passed in URL query param (?geminiKey=... or ?key=...)
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramKey = urlParams.get('geminiKey') || urlParams.get('key');
+    if (paramKey && paramKey.trim()) {
+      localStorage.setItem(API_KEY_STORAGE_KEY, paramKey.trim());
+      // Clean query parameter from URL without page reload
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, document.title, cleanUrl);
+      return paramKey.trim();
+    }
+  } catch {
+    // Ignore URL parse error in restricted sandbox environments
+  }
+
   const local = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (local) return local;
   return process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
@@ -51,8 +68,8 @@ export function setStoredApiKey(key: string): void {
  * Retrieves the preferred Gemini model name.
  */
 export function getStoredModel(): string {
-  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash';
-  return localStorage.getItem(MODEL_NAME_STORAGE_KEY) || process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash';
+  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  return localStorage.getItem(MODEL_NAME_STORAGE_KEY) || process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 }
 
 /**

@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/Button';
 import { AiConfigModal } from '@/components/ui/AiConfigModal';
 import { createSpeechRecognitionController } from '@/lib/speech-recognition';
 import { translateText, getStoredApiKey } from '@/lib/gemini-translator';
-import { createSpeechSynthesisController } from '@/lib/speech-synthesis';
+import { createSpeechSynthesisController, unlockAudioPlayback } from '@/lib/speech-synthesis';
 import {
   subscribeToLiveSync,
   broadcastCaptionFinal,
@@ -98,10 +98,14 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
     }
   }, [captions, partialText, showCaptions]);
 
+  const playedCaptionIdsRef = useRef<Set<string>>(new Set());
+
   // Handle incoming audio playback when a caption is generated/received
   const playCaptionAudio = useCallback(
     (cap: CaptionEntry) => {
       if (isAudioMuted || !ttsRef.current) return;
+      if (playedCaptionIdsRef.current.has(cap.id)) return;
+      playedCaptionIdsRef.current.add(cap.id);
       const translated = cap.translations?.[audioLang] || cap.originalText;
       ttsRef.current.speak(translated, audioLang);
     },
@@ -117,21 +121,37 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
       const speakerName = 'Presenter (Live)';
       setCurrentSpeaker(speakerName);
 
+      const captionId = `live-cap-${Date.now()}`;
+      // 1. Instant Optimistic Render: Display the user's sentence immediately (0ms delay!)
+      const initialEntry: CaptionEntry = {
+        id: captionId,
+        speaker: speakerName,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        originalText: finalTranscript,
+        translations: {
+          en: finalTranscript,
+          fr: '...',
+          pt: '...',
+          sw: '...',
+        },
+        glossaryTerms: [],
+      };
+
+      setCaptions((prev) => [...prev, initialEntry]);
+
+      // 2. Sub-second Gemini 3.5 Flash translation
       try {
         const result = await translateText(finalTranscript, undefined, activeGlossary);
 
-        const newEntry: CaptionEntry = {
-          id: `live-cap-${Date.now()}`,
-          speaker: speakerName,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          originalText: result.originalText,
+        const updatedEntry: CaptionEntry = {
+          ...initialEntry,
           translations: result.translations,
           glossaryTerms: result.glossaryTerms,
         };
 
-        setCaptions((prev) => [...prev, newEntry]);
-        broadcastCaptionFinal(newEntry);
-        playCaptionAudio(newEntry);
+        setCaptions((prev) => prev.map((c) => (c.id === captionId ? updatedEntry : c)));
+        broadcastCaptionFinal(updatedEntry);
+        playCaptionAudio(updatedEntry);
       } catch (err: any) {
         setMicErrorMessage('Translation error: ' + (err?.message || 'Unknown error'));
       }
@@ -242,6 +262,7 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
     if (isPresenterMicLive) {
       speechRecognizerRef.current?.stop();
     } else {
+      unlockAudioPlayback();
       // Pause simulator when presenter starts speaking
       simulatorRef.current?.pause();
       await speechRecognizerRef.current?.start();
@@ -516,8 +537,12 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
                 setIsAudioMuted(nextState);
                 if (nextState) {
                   ttsRef.current?.stop();
-                } else if (captions.length > 0) {
-                  playCaptionAudio(captions[captions.length - 1]);
+                } else {
+                  unlockAudioPlayback();
+                  playedCaptionIdsRef.current.clear();
+                  if (captions.length > 0) {
+                    playCaptionAudio(captions[captions.length - 1]);
+                  }
                 }
               }}
               title={isAudioMuted ? 'Click to Listen Live' : 'Mute Spoken Audio'}
@@ -550,6 +575,8 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
                   className={`${styles.channelItem} ${isActive ? styles.channelActive : ''}`}
                   onClick={() => {
                     setAudioLang(lang.code);
+                    unlockAudioPlayback();
+                    playedCaptionIdsRef.current.clear();
                     if (!isAudioMuted && captions.length > 0) {
                       const lastCap = captions[captions.length - 1];
                       ttsRef.current?.speak(lastCap.translations?.[lang.code] || lastCap.originalText, lang.code);

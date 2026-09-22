@@ -184,6 +184,22 @@ function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null 
   return null;
 }
 
+let persistentAudio: HTMLAudioElement | null = null;
+
+/**
+ * Unlocks browser audio autoplay when the user interacts with the page (e.g. clicks Listen Live or Unmute).
+ */
+export function unlockAudioPlayback(): void {
+  if (typeof window === 'undefined') return;
+  if (!persistentAudio) {
+    persistentAudio = new Audio();
+    persistentAudio.preload = 'auto';
+  }
+  // Play 1ms silent audio to unlock autoplay permissions in modern browsers
+  persistentAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+  persistentAudio.play().catch(() => {});
+}
+
 /**
  * Plays a single speech chunk via Neural Audio Stream or SpeechSynthesis.
  */
@@ -192,7 +208,7 @@ function playAudioChunk(chunk: string, langCode: string, playbackRate: number): 
     const ttsLangMap: Record<string, string> = {
       sw: 'sw', // Authentic East African Kiswahili neural voice
       fr: 'fr', // French neural voice
-      pt: 'pt', // Portuguese neural voice
+      pt: 'pt-PT', // African Lusophone (Angola, Mozambique) / European Portuguese (NOT Brazilian)
       en: 'en', // English voice
     };
 
@@ -200,7 +216,11 @@ function playAudioChunk(chunk: string, langCode: string, playbackRate: number): 
     const query = encodeURIComponent(chunk);
     const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${ttsLang}&client=tw-ob&q=${query}`;
 
-    const audio = new Audio(url);
+    if (!persistentAudio) {
+      persistentAudio = new Audio();
+    }
+
+    const audio = persistentAudio;
     currentAudioElement = audio;
     audio.playbackRate = playbackRate;
 
@@ -208,9 +228,6 @@ function playAudioChunk(chunk: string, langCode: string, playbackRate: number): 
     const finish = () => {
       if (!hasResolved) {
         hasResolved = true;
-        if (currentAudioElement === audio) {
-          currentAudioElement = null;
-        }
         resolve();
       }
     };
@@ -222,6 +239,7 @@ function playAudioChunk(chunk: string, langCode: string, playbackRate: number): 
       fallbackSpeechSynthesis(chunk, langCode, playbackRate).then(finish);
     };
 
+    audio.src = url;
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise.catch(() => {

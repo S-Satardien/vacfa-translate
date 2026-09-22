@@ -17,7 +17,7 @@ interface AiConfigModalProps {
  */
 export const AiConfigModal: React.FC<AiConfigModalProps> = ({ isOpen, onClose, onConfigSaved }) => {
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('gemini-1.5-flash');
+  const [model, setModel] = useState('gemini-3.5-flash');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
 

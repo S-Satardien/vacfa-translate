@@ -64,7 +64,7 @@ export function MobileLiveView({
   // Audio playback handler with duplicate protection
   const playAudio = useCallback(
     (text: string, captionId?: string) => {
-      if (isAudioMuted || !ttsRef.current) return;
+      if (isAudioMuted || !ttsRef.current || !text || text === '...') return;
       if (captionId) {
         if (playedCaptionIdsRef.current.has(captionId)) return;
         playedCaptionIdsRef.current.add(captionId);
@@ -176,8 +176,9 @@ export function MobileLiveView({
     captionsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [simText, simCaptions, liveCaptions, liveInterimText]);
 
-  // Reset deduplication cache when listener changes their audio language
+  // Stop previous language speech and reset deduplication cache when listener changes their audio language
   useEffect(() => {
+    ttsRef.current?.stop();
     playedCaptionIdsRef.current.clear();
   }, [language.code]);
 
@@ -336,7 +337,11 @@ export function MobileLiveView({
                   playedCaptionIdsRef.current.clear();
                   if (displayCaptions.length > 0) {
                     const last = displayCaptions[displayCaptions.length - 1];
-                    playAudio(last.translations?.[language.code] || last.originalText);
+                    playedCaptionIdsRef.current.add(last.id);
+                    const text = last.translations?.[language.code] || last.originalText;
+                    if (text && text !== '...') {
+                      ttsRef.current?.speak(text, language.code);
+                    }
                   }
                 }
               }}

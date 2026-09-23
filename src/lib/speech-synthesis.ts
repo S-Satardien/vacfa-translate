@@ -25,6 +25,8 @@ const audioQueue: AudioQueueItem[] = [];
 let isProcessingQueue = false;
 let currentAudioElement: HTMLAudioElement | null = null;
 let cachedVoices: SpeechSynthesisVoice[] = [];
+let queueGeneration = 0;
+let activeChunkResolver: (() => void) | null = null;
 
 /**
  * Loads available browser speech synthesis voices.
@@ -202,9 +204,39 @@ export function unlockAudioPlayback(): void {
 
 /**
  * Plays a single speech chunk via Neural Audio Stream or SpeechSynthesis.
+ * Guaranteed to execute fallback at most once, eliminating duplicate audio playback.
  */
-function playAudioChunk(chunk: string, langCode: string, playbackRate: number): Promise<void> {
+function playAudioChunk(
+  chunk: string,
+  langCode: string,
+  playbackRate: number,
+  expectedGen: number
+): Promise<void> {
   return new Promise((resolve) => {
+    // If stop() or channel switch occurred before this chunk started, abort immediately
+    if (queueGeneration !== expectedGen) {
+      resolve();
+      return;
+    }
+
+    let isDone = false;
+    const finish = () => {
+      if (!isDone) {
+        isDone = true;
+        activeChunkResolver = null;
+        resolve();
+      }
+    };
+
+    activeChunkResolver = finish;
+
+    let fallbackInvoked = false;
+    const invokeFallbackOnce = () => {
+      if (isDone || fallbackInvoked || queueGeneration !== expectedGen) return;
+      fallbackInvoked = true;
+      fallbackSpeechSynthesis(chunk, langCode, playbackRate, expectedGen).then(finish);
+    };
+
     const ttsLangMap: Record<string, string> = {
       sw: 'sw', // Authentic East African Kiswahili neural voice
       fr: 'fr', // French neural voice
@@ -224,26 +256,27 @@ function playAudioChunk(chunk: string, langCode: string, playbackRate: number): 
     currentAudioElement = audio;
     audio.playbackRate = playbackRate;
 
-    let hasResolved = false;
-    const finish = () => {
-      if (!hasResolved) {
-        hasResolved = true;
-        resolve();
+    audio.onended = () => {
+      if (!fallbackInvoked) {
+        finish();
       }
     };
 
-    audio.onended = finish;
-
     audio.onerror = () => {
-      // Fallback to SpeechSynthesis if audio stream encounters an issue
-      fallbackSpeechSynthesis(chunk, langCode, playbackRate).then(finish);
+      // Audio stream failed (e.g. CORS/network limit) -> trigger fallback ONCE
+      invokeFallbackOnce();
     };
 
     audio.src = url;
     const playPromise = audio.play();
     if (playPromise !== undefined) {
-      playPromise.catch(() => {
-        fallbackSpeechSynthesis(chunk, langCode, playbackRate).then(finish);
+      playPromise.catch((err) => {
+        // If aborted because stop() or pause() was called, do NOT execute fallback!
+        if (err?.name === 'AbortError' || queueGeneration !== expectedGen) {
+          finish();
+          return;
+        }
+        invokeFallbackOnce();
       });
     }
   });
@@ -251,13 +284,27 @@ function playAudioChunk(chunk: string, langCode: string, playbackRate: number): 
 
 /**
  * Fallback SpeechSynthesis player for offline or blocked environments.
+ * Uses expectedGen check and cancels any pending browser utterances before speaking.
  */
-function fallbackSpeechSynthesis(text: string, langCode: string, rate: number): Promise<void> {
+function fallbackSpeechSynthesis(
+  text: string,
+  langCode: string,
+  rate: number,
+  expectedGen: number
+): Promise<void> {
   return new Promise((resolve) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       resolve();
       return;
     }
+
+    if (queueGeneration !== expectedGen) {
+      resolve();
+      return;
+    }
+
+    // Cancel any previous hung or running browser utterance before speaking new chunk
+    window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
     const voice = getBestVoiceForLanguage(langCode);
@@ -275,8 +322,25 @@ function fallbackSpeechSynthesis(text: string, langCode: string, rate: number): 
     utterance.rate = rate;
     utterance.pitch = 1.0;
 
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
+    let isDone = false;
+    const finish = () => {
+      if (!isDone) {
+        isDone = true;
+        resolve();
+      }
+    };
+
+    // Safety timeout in case speechSynthesis.speak gets stuck (known browser bug where onend doesn't fire)
+    const timeout = setTimeout(finish, 10000);
+
+    utterance.onend = () => {
+      clearTimeout(timeout);
+      finish();
+    };
+    utterance.onerror = () => {
+      clearTimeout(timeout);
+      finish();
+    };
 
     window.speechSynthesis.speak(utterance);
   });
@@ -292,8 +356,9 @@ async function processAudioQueue(): Promise<void> {
   if (audioQueue.length === 0) return;
 
   isProcessingQueue = true;
+  const thisGen = queueGeneration;
 
-  while (audioQueue.length > 0) {
+  while (audioQueue.length > 0 && queueGeneration === thisGen) {
     const item = audioQueue.shift();
     if (!item) break;
 
@@ -308,7 +373,7 @@ async function processAudioQueue(): Promise<void> {
       rate = 1.18;
     }
 
-    await playAudioChunk(item.text, item.langCode, rate);
+    await playAudioChunk(item.text, item.langCode, rate, thisGen);
   }
 
   isProcessingQueue = false;
@@ -338,14 +403,24 @@ export function createSpeechSynthesisController(): SpeechSynthesisController {
     },
 
     stop(): void {
+      // Invalidate in-flight and pending queue generation
+      queueGeneration++;
+
       // Clear pending queue
       audioQueue.length = 0;
       isProcessingQueue = false;
 
+      // Abort active chunk promise immediately if one is awaiting
+      if (activeChunkResolver) {
+        activeChunkResolver();
+        activeChunkResolver = null;
+      }
+
       // Stop current active audio stream
       if (currentAudioElement) {
         currentAudioElement.pause();
-        currentAudioElement.currentTime = 0;
+        currentAudioElement.removeAttribute('src');
+        currentAudioElement.load();
         currentAudioElement = null;
       }
 

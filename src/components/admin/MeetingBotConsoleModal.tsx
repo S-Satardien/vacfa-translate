@@ -56,6 +56,8 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
       controllerRef.current?.stopAudioCapture();
       controllerRef.current?.stopSimulatedRelay();
       controllerRef.current = null;
+      ttsRef.current?.stop();
+      setMonitoringLang(null);
       return;
     }
 
@@ -124,6 +126,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
       setMonitoringLang(null);
       ttsRef.current?.stop();
     } else {
+      ttsRef.current?.stop();
       setMonitoringLang(langCode);
       const testPhrases: Record<string, string> = {
         fr: "Canal d'interprétation simultanée français actif. Qualité audio optimale.",

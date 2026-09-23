@@ -121,8 +121,9 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     (cap: CaptionEntry) => {
       if (isAudioMuted || !ttsRef.current) return;
       if (playedCaptionIdsRef.current.has(cap.id)) return;
-      playedCaptionIdsRef.current.add(cap.id);
       const translated = cap.translations?.[audioLang] || cap.originalText;
+      if (!translated || translated === '...') return;
+      playedCaptionIdsRef.current.add(cap.id);
       ttsRef.current.speak(translated, audioLang);
     },
     [audioLang, isAudioMuted]
@@ -575,7 +576,12 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   unlockAudioPlayback();
                   playedCaptionIdsRef.current.clear();
                   if (captions.length > 0) {
-                    playCaptionAudio(captions[captions.length - 1]);
+                    const lastCap = captions[captions.length - 1];
+                    playedCaptionIdsRef.current.add(lastCap.id);
+                    const translated = lastCap.translations?.[audioLang] || lastCap.originalText;
+                    if (translated && translated !== '...') {
+                      ttsRef.current?.speak(translated, audioLang);
+                    }
                   }
                 }
               }}
@@ -608,12 +614,19 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   key={`audio-${lang.code}`}
                   className={`${styles.channelItem} ${isActive ? styles.channelActive : ''}`}
                   onClick={() => {
+                    if (audioLang === lang.code) return;
+                    // Instantly abort audio from previous language and dump queue
+                    ttsRef.current?.stop();
                     setAudioLang(lang.code);
                     unlockAudioPlayback();
                     playedCaptionIdsRef.current.clear();
                     if (!isAudioMuted && captions.length > 0) {
                       const lastCap = captions[captions.length - 1];
-                      ttsRef.current?.speak(lastCap.translations?.[lang.code] || lastCap.originalText, lang.code);
+                      playedCaptionIdsRef.current.add(lastCap.id);
+                      const translated = lastCap.translations?.[lang.code] || lastCap.originalText;
+                      if (translated && translated !== '...') {
+                        ttsRef.current?.speak(translated, lang.code);
+                      }
                     }
                   }}
                 >

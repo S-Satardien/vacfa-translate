@@ -3,7 +3,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
-import { Home, Mic, BookOpen, Users, Settings, ChevronLeft, ChevronRight, Moon, Sun } from 'lucide-react';
+import { Home, Mic, BookOpen, Users, Settings, ChevronLeft, ChevronRight, Moon, Sun, Video } from 'lucide-react';
 import styles from './NavSidebar.module.css';
 import { NavItem } from '@/lib/types';
 import { useTheme } from 'next-themes';
@@ -23,6 +23,7 @@ const iconMap: Record<string, React.ReactNode> = {
   'book-open': <BookOpen size={20} />,
   users: <Users size={20} />,
   settings: <Settings size={20} />,
+  video: <Video size={20} />,
 };
 
 /**

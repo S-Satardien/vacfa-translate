@@ -5,13 +5,14 @@
  * and dynamically added glossary terms across multiple browser tabs, windows, and devices.
  */
 
-import type { CaptionEntry, GlossaryTerm } from './types';
+import type { CaptionEntry, GlossaryTerm, MeetingBotStatus } from './types';
 import { GLOSSARY_TERMS } from './demo-data';
 
 export type LiveSyncMessage =
   | { type: 'CAPTION_FINAL'; payload: CaptionEntry }
   | { type: 'CAPTION_INTERIM'; payload: { speaker: string; text: string } }
   | { type: 'MIC_STATUS'; payload: { isLive: boolean; speaker: string; audioLevel: number } }
+  | { type: 'MEETING_BOT_UPDATE'; payload: { sessionId: string; status: MeetingBotStatus; audioLevel: number; speakerName?: string; details?: string } }
   | { type: 'GLOSSARY_ADDED'; payload: GlossaryTerm }
   | { type: 'SESSION_RESET'; payload: { sessionId: string } };
 
@@ -19,6 +20,7 @@ export interface LiveSyncListener {
   onCaptionFinal?: (caption: CaptionEntry) => void;
   onCaptionInterim?: (data: { speaker: string; text: string }) => void;
   onMicStatus?: (data: { isLive: boolean; speaker: string; audioLevel: number }) => void;
+  onMeetingBotUpdate?: (data: { sessionId: string; status: MeetingBotStatus; audioLevel: number; speakerName?: string; details?: string }) => void;
   onGlossaryAdded?: (term: GlossaryTerm) => void;
   onSessionReset?: () => void;
 }
@@ -49,6 +51,9 @@ function getChannel(): BroadcastChannel | null {
             break;
           case 'MIC_STATUS':
             listener.onMicStatus?.(msg.payload);
+            break;
+          case 'MEETING_BOT_UPDATE':
+            listener.onMeetingBotUpdate?.(msg.payload);
             break;
           case 'GLOSSARY_ADDED':
             listener.onGlossaryAdded?.(msg.payload);
@@ -104,6 +109,20 @@ export function broadcastCaptionInterim(speaker: string, text: string): void {
 export function broadcastMicStatus(isLive: boolean, speaker: string, audioLevel: number): void {
   const ch = getChannel();
   ch?.postMessage({ type: 'MIC_STATUS', payload: { isLive, speaker, audioLevel } });
+}
+
+/**
+ * Broadcasts meeting bot lifecycle status, audio volume, and connection details.
+ */
+export function broadcastMeetingBotUpdate(payload: {
+  sessionId: string;
+  status: MeetingBotStatus;
+  audioLevel: number;
+  speakerName?: string;
+  details?: string;
+}): void {
+  const ch = getChannel();
+  ch?.postMessage({ type: 'MEETING_BOT_UPDATE', payload });
 }
 
 /**

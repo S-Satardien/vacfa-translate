@@ -1,0 +1,288 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  color: var(--cream);
+}
+
+.meetingHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+}
+
+.platformBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.teamsBadge {
+  background: rgba(84, 91, 199, 0.2);
+  color: #7B83EB;
+  border: 1px solid rgba(84, 91, 199, 0.4);
+}
+
+.zoomBadge {
+  background: rgba(45, 140, 255, 0.2);
+  color: #4EA3FF;
+  border: 1px solid rgba(45, 140, 255, 0.4);
+}
+
+.meetBadge {
+  background: rgba(0, 172, 70, 0.2);
+  color: #34D399;
+  border: 1px solid rgba(0, 172, 70, 0.4);
+}
+
+.directBadge {
+  background: rgba(196, 30, 58, 0.2);
+  color: var(--vacfa-red-light);
+  border: 1px solid rgba(196, 30, 58, 0.4);
+}
+
+.meetingDetails {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  background: var(--surface-primary);
+  border: 1px solid var(--surface-elevated);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  font-size: 0.85rem;
+}
+
+.detailRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detailLabel {
+  font-size: 0.75rem;
+  color: var(--grey-400);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detailValue {
+  font-family: monospace;
+  color: var(--white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.botStatusCard {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+  border-radius: 14px;
+  background: rgba(26, 26, 26, 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.botStatusTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.botInfo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.botAvatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--vacfa-red) 0%, #4A0E17 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.botName {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--white);
+  margin: 0;
+}
+
+.botSubtitle {
+  font-size: 0.8rem;
+  color: var(--grey-400);
+  margin: 2px 0 0 0;
+}
+
+.lifecycleSteps {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  margin: 0.5rem 0;
+  padding: 0 0.5rem;
+}
+
+.lifecycleStep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 1;
+}
+
+.stepDot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--grey-700);
+  border: 2px solid var(--surface-primary);
+  transition: all 0.3s ease;
+}
+
+.stepDotActive {
+  background: var(--vacfa-red);
+  box-shadow: 0 0 10px rgba(196, 30, 58, 0.8);
+}
+
+.stepDotDone {
+  background: var(--success);
+}
+
+.stepLabel {
+  font-size: 0.7rem;
+  color: var(--grey-400);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.controlsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.telemetryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 12px;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.telemetryItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.telemetryLabel {
+  font-size: 0.7rem;
+  color: var(--grey-400);
+}
+
+.telemetryValue {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--cream);
+  font-family: monospace;
+}
+
+.channelsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sectionTitle {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--cream);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.channelList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.channelCard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  background: var(--surface-primary);
+  border: 1px solid var(--surface-elevated);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.channelCardActive {
+  border-color: rgba(76, 175, 80, 0.4);
+  background: rgba(76, 175, 80, 0.03);
+}
+
+.channelLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.channelLangName {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--white);
+}
+
+.channelMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--grey-400);
+  margin-top: 2px;
+}
+
+.vuMeter {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 20px;
+  width: 50px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.vuBar {
+  flex: 1;
+  background: var(--success);
+  border-radius: 2px;
+  min-height: 3px;
+  transition: height 0.08s ease;
+}

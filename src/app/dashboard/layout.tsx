@@ -8,6 +8,7 @@ import type { NavItem } from '@/lib/types';
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Overview', icon: 'home', href: '/dashboard' },
   { id: 'sessions', label: 'Sessions', icon: 'mic', href: '/dashboard/sessions', badge: 1 },
+  { id: 'integrations', label: 'Meeting Bots', icon: 'video', href: '/dashboard/integrations' },
   { id: 'glossary', label: 'Glossary', icon: 'bookOpen', href: '/dashboard/glossary' },
   { id: 'organisers', label: 'Organisers', icon: 'users', href: '/dashboard/organisers' },
   { id: 'settings', label: 'Settings', icon: 'settings', href: '/dashboard/settings' },

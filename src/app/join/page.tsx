@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowRight, ArrowLeft } from 'lucide-react';
-import { SESSIONS } from '@/lib/demo-data';
+import { getSessionByCode } from '@/lib/session-store';
 import styles from './join.module.css';
 
 /**
@@ -17,6 +17,21 @@ export default function JoinPage() {
   const router = useRouter();
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
+
+  // Check URL query parameter ?code=...
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlCode = new URLSearchParams(window.location.search).get('code');
+      if (urlCode && urlCode.trim().length === 6) {
+        const clean = urlCode.trim();
+        setCode(clean);
+        const match = getSessionByCode(clean);
+        if (match && match.status !== 'ended') {
+          router.push(`/live/${match.id}`);
+        }
+      }
+    }
+  }, [router]);
 
   /** Handle code input — digits only, max 6 */
   const handleCodeChange = (value: string) => {
@@ -32,7 +47,7 @@ export default function JoinPage() {
       return;
     }
 
-    const session = SESSIONS.find(s => s.sessionCode === code);
+    const session = getSessionByCode(code);
     if (!session) {
       setError('Session not found. Please check the code and try again.');
       return;

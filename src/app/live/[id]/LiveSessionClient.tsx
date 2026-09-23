@@ -13,9 +13,11 @@ import {
   VolumeX,
   Sparkles,
   CheckCircle2,
+  Bot,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Session, CaptionEntry, GlossaryTerm } from '@/lib/types';
+import { getSessionById } from '@/lib/session-store';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { AiConfigModal } from '@/components/ui/AiConfigModal';
@@ -35,10 +37,24 @@ import styles from './LiveSession.module.css';
 
 interface LiveSessionClientProps {
   session: Session;
+  sessionId?: string;
 }
 
-export default function LiveSessionClient({ session }: LiveSessionClientProps) {
+export default function LiveSessionClient({ session, sessionId }: LiveSessionClientProps) {
   const router = useRouter();
+  const [currentSession, setCurrentSession] = useState<Session>(session);
+
+  useEffect(() => {
+    if (sessionId) {
+      const stored = getSessionById(sessionId);
+      if (stored) {
+        setCurrentSession(stored);
+        if (stored.languages.length > 1) {
+          setAudioLang(stored.languages[1].code);
+        }
+      }
+    }
+  }, [sessionId]);
 
   // Language channel states
   const [audioLang, setAudioLang] = useState(session.languages[1]?.code || 'fr');
@@ -349,8 +365,26 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
               </button>
             </div>
 
-            <h1 className={styles.title}>{session.name}</h1>
-            <p className={styles.code}>Code: {session.sessionCode}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+              <h1 className={styles.title} style={{ margin: 0 }}>{currentSession.name}</h1>
+              {currentSession.meetingIntegration?.botEnabled && (
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: '999px',
+                  background: 'rgba(84, 91, 199, 0.2)',
+                  color: '#8E96F7',
+                  border: '1px solid rgba(84, 91, 199, 0.4)',
+                }}>
+                  <Bot size={12} /> {currentSession.meetingIntegration.platform.toUpperCase()} Bot
+                </span>
+              )}
+            </div>
+            <p className={styles.code}>Code: {currentSession.sessionCode}</p>
           </div>
 
           {/* Presenter Live Mic Broadcast Action */}
@@ -567,7 +601,7 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
           </div>
 
           <div className={styles.channelList}>
-            {session.languages.map((lang) => {
+            {currentSession.languages.map((lang) => {
               const isActive = audioLang === lang.code;
               return (
                 <div
@@ -620,7 +654,7 @@ export default function LiveSessionClient({ session }: LiveSessionClientProps) {
           </div>
 
           <div className={styles.channelList} style={{ opacity: showCaptions ? 1 : 0.5, pointerEvents: showCaptions ? 'auto' : 'none' }}>
-            {session.languages.map((lang) => {
+            {currentSession.languages.map((lang) => {
               const isActive = captionLang === lang.code;
               return (
                 <div

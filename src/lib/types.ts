@@ -9,6 +9,38 @@ export interface Language {
   listenerCount?: number;
 }
 
+// Meeting Platforms supported
+export type MeetingPlatform = 'teams' | 'zoom' | 'meet' | 'direct';
+
+// Meeting Bot lifecycle states
+export type MeetingBotStatus = 'idle' | 'dispatching' | 'in_lobby' | 'connected' | 'streaming' | 'error' | 'disconnected';
+
+// Meeting Integration configuration for sessions
+export interface MeetingIntegration {
+  platform: MeetingPlatform;
+  meetingUrl?: string;
+  meetingId?: string;
+  passcode?: string;
+  botEnabled: boolean;
+  botName: string;
+  botStatus: MeetingBotStatus;
+  sourceLanguage: string;
+  targetLanguages: string[]; // language codes for interpretation channels
+  audioCaptureMode?: 'screen_audio' | 'simulated_relay' | 'mic_relay';
+  lastStatusMessage?: string;
+  connectedAt?: string;
+}
+
+// Real-time Interpretation Channel Status
+export interface InterpretationChannelStatus {
+  language: Language;
+  isStreaming: boolean;
+  latencyMs: number;
+  audioLevel: number;
+  activeSpeaker?: string;
+  listenerCount: number;
+}
+
 // Session
 export interface Session {
   id: string;
@@ -21,6 +53,7 @@ export interface Session {
   status: 'upcoming' | 'live' | 'ended';
   delegateCount: number;
   description?: string;
+  meetingIntegration?: MeetingIntegration;
 }
 
 // Glossary term

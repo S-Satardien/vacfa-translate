@@ -12,6 +12,7 @@ import { updateMeetingIntegration } from './session-store';
 import { broadcastMeetingBotUpdate, broadcastCaptionFinal, broadcastCaptionInterim, broadcastMicStatus, getActiveSessionGlossary } from './live-sync';
 import { translateText } from './gemini-translator';
 import { createSpeechRecognitionController } from './speech-recognition';
+import { sendTeamsCartCaption } from './teams-cart';
 
 export interface MeetingBotCallbacks {
   onStatusChange?: (status: MeetingBotStatus, details?: string) => void;
@@ -225,6 +226,15 @@ export function createMeetingBotController(
             };
 
             broadcastCaptionFinal(finalEntry);
+
+            // Stream to Microsoft Teams CART API if configured
+            if (session.meetingIntegration?.teamsCartUrl) {
+              const cartLang = session.meetingIntegration.teamsCartLanguage || 'fr';
+              const cartText = finalEntry.translations?.[cartLang] || finalEntry.originalText;
+              sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
+                speaker: `VACFA (${cartLang.toUpperCase()})`,
+              }).catch(() => {});
+            }
           },
           onAudioLevel: () => {},
           onError: (err) => {
@@ -303,6 +313,15 @@ export function createMeetingBotController(
         };
 
         broadcastCaptionFinal(finalEntry);
+
+        // Stream to Microsoft Teams CART API if configured
+        if (session.meetingIntegration?.teamsCartUrl) {
+          const cartLang = session.meetingIntegration.teamsCartLanguage || 'fr';
+          const cartText = finalEntry.translations?.[cartLang] || finalEntry.originalText;
+          sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
+            speaker: `VACFA (${cartLang.toUpperCase()})`,
+          }).catch(() => {});
+        }
 
         // Pulse audio levels
         channels = channels.map((c) => ({

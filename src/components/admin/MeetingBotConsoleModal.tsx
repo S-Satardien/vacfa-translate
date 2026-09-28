@@ -245,14 +245,27 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
             </h3>
           </div>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={copiedLink ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
-            onClick={handleCopyLink}
-          >
-            {copiedLink ? 'Link Copied' : 'Copy Attendee Link'}
-          </Button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {meeting.meetingUrl && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<ExternalLink size={14} />}
+                onClick={() => window.open(meeting.meetingUrl, '_blank')}
+              >
+                Open in Teams
+              </Button>
+            )}
+
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={copiedLink ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
+              onClick={handleCopyLink}
+            >
+              {copiedLink ? 'Link Copied' : 'Copy Attendee Link'}
+            </Button>
+          </div>
         </div>
 
         {/* Meeting Credentials */}
@@ -318,6 +331,28 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
         {/* Tab 1: Simultaneous Audio Channels */}
         {activeTab === 'channels' && (
           <>
+            {/* Audio Bridge & Teams Ingestion Notice */}
+            <div
+              style={{
+                background: 'rgba(84, 91, 199, 0.12)',
+                border: '1px solid rgba(84, 91, 199, 0.28)',
+                borderRadius: '12px',
+                padding: '12px 14px',
+                fontSize: '0.85rem',
+                color: 'var(--cream)',
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ color: '#8E96F7', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                <Info size={16} /> How to Bridge Microsoft Teams Live Audio & Subtitles:
+              </div>
+              <div>
+                1. Once you click <strong>Invite Bot</strong> below, click <strong>Capture Teams/Zoom Tab Audio</strong>.<br />
+                2. Select your active Microsoft Teams meeting tab and ensure the <strong>"Share audio"</strong> checkbox is ticked.<br />
+                3. As anyone in Teams speaks, VACFA transcribes and translates the speech in real-time, streaming translated subtitles straight into your Teams meeting window via your configured <strong>CART Captions Link</strong>!
+              </div>
+            </div>
+
             {/* Bot Status & Lifecycle Card */}
             <div className={styles.botStatusCard}>
               <div className={styles.botStatusTop}>

@@ -5,16 +5,20 @@
  * tenant admin approval or third-party Teams App Store permissions.
  * 
  * Capabilities:
- * 1. Joins meeting as an external/guest attendee named "VACFA AI Interpreter".
- * 2. Ingests the master mixed WebRTC audio stream of ALL meeting participants.
- * 3. Reads real-time active speaker names from the Microsoft Teams DOM.
- * 4. Pushes translated subtitles directly into Microsoft Teams CART captions.
+ * 1. Launches browser (Chrome / Edge) with WebRTC audio flags and isolated profile.
+ * 2. Joins meeting as an external/guest attendee named "VACFA AI Interpreter".
+ * 3. Ingests the master mixed WebRTC audio stream of ALL meeting participants.
+ * 4. Reads real-time active speaker names from the Microsoft Teams DOM.
+ * 5. Pushes translated subtitles directly into Microsoft Teams CART captions.
  * 
  * Usage:
- *   node scripts/teams-bot-runner.js "https://teams.microsoft.com/meet/..." "CART_URL_OPTIONAL"
+ *   node scripts/teams-bot-runner.js "<TEAMS_MEETING_URL>" ["<CART_URL>"]
  */
 
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const https = require('https');
 const http = require('http');
 
@@ -22,6 +26,7 @@ const MEETING_URL = process.argv[2] || process.env.TEAMS_MEETING_URL;
 const CART_URL = process.argv[3] || process.env.TEAMS_CART_URL;
 const BOT_NAME = process.env.BOT_NAME || 'VACFA AI Interpreter';
 const BOT_EMAIL = process.env.BOT_EMAIL || 'bot@vacfa-translate.org';
+const DEBUG_PORT = process.env.DEBUG_PORT || 9222;
 
 if (!MEETING_URL) {
   console.log(`
@@ -47,35 +52,45 @@ if (!MEETING_URL) {
   process.exit(1);
 }
 
-console.log(`[VACFA Bot] Initializing virtual attendee "${BOT_NAME}" (${BOT_EMAIL})...`);
-console.log(`[VACFA Bot] Target Teams Meeting: ${MEETING_URL}`);
+console.log(`=============================================================================`);
+console.log(`  VACFA Translate — Virtual Attendee Bot`);
+console.log(`=============================================================================`);
+console.log(`[VACFA Bot] Target Meeting: ${MEETING_URL}`);
+console.log(`[VACFA Bot] Bot Identity  : ${BOT_NAME} (${BOT_EMAIL})`);
 if (CART_URL) {
-  console.log(`[VACFA Bot] Linked CART Endpoint: ${CART_URL.slice(0, 60)}...`);
+  console.log(`[VACFA Bot] CART Ingestion: ${CART_URL.slice(0, 60)}...`);
 }
+console.log(`-----------------------------------------------------------------------------`);
 
 /**
- * Chromium browser flags required for automated Teams WebRTC participation:
- * - Allows microphone/camera bypass without permission prompt.
- * - Enables WebRTC audio capture.
- * - Allows autoplay without user gesture.
+ * Finds available browser executable (Chrome or Edge).
  */
-const CHROMIUM_ARGS = [
-  '--no-sandbox',
-  '--disable-setuid-sandbox',
-  '--disable-infobars',
-  '--window-size=1280,720',
-  '--use-fake-ui-for-media-stream',
-  '--use-fake-device-for-media-stream',
-  '--autoplay-policy=no-user-gesture-required',
-  '--disable-blink-features=AutomationControlled',
-  MEETING_URL,
-];
+function findBrowser() {
+  const candidates = [
+    process.env.CHROME_BIN,
+    process.env.EDGE_BIN,
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/microsoft-edge',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  ].filter(Boolean);
+
+  for (const bin of candidates) {
+    if (fs.existsSync(bin)) return bin;
+  }
+  return null;
+}
 
 /**
  * Sends translated subtitles to Microsoft Teams CART API.
  */
 function sendCartCaption(cartUrl, text, speakerName = BOT_NAME) {
-  if (!cartUrl) return Promise.resolve();
+  if (!cartUrl) return Promise.resolve(false);
 
   return new Promise((resolve) => {
     try {
@@ -118,41 +133,50 @@ function sendCartCaption(cartUrl, text, speakerName = BOT_NAME) {
 }
 
 /**
- * DOM Injection script executed inside Microsoft Teams web client:
- * 1. Fills the guest attendee name ("VACFA AI Interpreter").
- * 2. Turns off camera and mutes bot microphone before joining.
- * 3. Clicks "Join now".
- * 4. In call: monitors active speaker name tags (`[data-tid="participant-stream"]`).
+ * Client-side script injected into Microsoft Teams Web client via CDP.
  */
 const IN_MEETING_CONTROLLER_SCRIPT = `
 (function() {
+  if (window.__VACFA_BOT_INITIALIZED__) return;
+  window.__VACFA_BOT_INITIALIZED__ = true;
   console.log('[VACFA In-Meeting Engine] Loaded inside Teams Web client.');
 
   // Step 1: Pre-join automation
   function handlePreJoin() {
-    // Check if name input exists
-    const nameInput = document.querySelector('input[data-tid="prejoin-display-name-input"], input[placeholder*="name" i]');
-    if (nameInput) {
-      nameInput.value = "${BOT_NAME}";
-      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-      console.log('[VACFA Bot] Set display name to "${BOT_NAME}".');
+    // 1a. Handle "Continue on this browser" button
+    const continueOnBrowserBtn = Array.from(document.querySelectorAll('button, a')).find(el => 
+      /continue on this browser/i.test(el.textContent || '') ||
+      el.getAttribute('data-tid') === 'joinOnWeb'
+    );
+    if (continueOnBrowserBtn) {
+      console.log('[VACFA Bot] Clicking "Continue on this browser"...');
+      continueOnBrowserBtn.click();
     }
 
-    // Mute mic button
-    const micBtn = document.querySelector('button[data-tid="toggle-mute"], button[aria-label*="microphone" i]');
+    // 1b. Check if name input exists
+    const nameInput = document.querySelector('input[data-tid="prejoin-display-name-input"], input[placeholder*="name" i], input[aria-label*="name" i]');
+    if (nameInput && nameInput.value !== "${BOT_NAME}") {
+      nameInput.value = "${BOT_NAME}";
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      console.log('[VACFA Bot] Set attendee display name to "${BOT_NAME}".');
+    }
+
+    // 1c. Mute mic button
+    const micBtn = document.querySelector('button[data-tid="toggle-mute"], button[aria-label*="microphone" i], button[aria-label*="mic" i]');
     if (micBtn && micBtn.getAttribute('aria-checked') === 'true') {
       micBtn.click();
       console.log('[VACFA Bot] Pre-emptively muted bot microphone.');
     }
 
-    // Turn off camera button
-    const camBtn = document.querySelector('button[data-tid="toggle-video"], button[aria-label*="camera" i]');
+    // 1d. Turn off camera button
+    const camBtn = document.querySelector('button[data-tid="toggle-video"], button[aria-label*="camera" i], button[aria-label*="video" i]');
     if (camBtn && camBtn.getAttribute('aria-checked') === 'true') {
       camBtn.click();
       console.log('[VACFA Bot] Pre-emptively disabled camera.');
     }
 
-    // Click "Join now"
+    // 1e. Click "Join now"
     const joinBtn = document.querySelector('button[data-tid="prejoin-join-button"], button#prejoin-join-button');
     if (joinBtn && !joinBtn.disabled) {
       console.log('[VACFA Bot] Clicking "Join now"...');
@@ -163,20 +187,20 @@ const IN_MEETING_CONTROLLER_SCRIPT = `
   // Poll for pre-join elements
   const preJoinInterval = setInterval(() => {
     handlePreJoin();
-    // If in meeting room
-    if (document.querySelector('div[data-tid="calling-active-speaker"], div[data-tid="participant-stream"]')) {
+    // Detect if inside meeting room
+    if (document.querySelector('div[data-tid="calling-active-speaker"], div[data-tid="participant-stream"], div[data-tid="calling-roster-section"]')) {
       clearInterval(preJoinInterval);
-      console.log('[VACFA Bot] Successfully entered Teams meeting call!');
+      console.log('[VACFA Bot] Connected inside Teams meeting call!');
       startActiveSpeakerMonitor();
     }
-  }, 1200);
+  }, 1000);
 
   // Step 2: In-call active speaker name detection
   function startActiveSpeakerMonitor() {
     let lastSpeaker = '';
 
     setInterval(() => {
-      // Find currently highlighted speaker
+      // Find currently highlighted active speaker
       const activeSpeakerEl = document.querySelector(
         '[data-tid="calling-active-speaker"] [data-tid="participant-name"], ' +
         '[data-tid="participant-stream"][aria-label*="speaking" i], ' +
@@ -198,5 +222,150 @@ const IN_MEETING_CONTROLLER_SCRIPT = `
 })();
 `;
 
-console.log(`[VACFA Bot] Bot controller ready.`);
-console.log(`[VACFA Bot] To launch headless Chrome: ensure Chrome/Chromium or Playwright is installed on this host.`);
+async function main() {
+  const browserBin = findBrowser();
+  if (!browserBin) {
+    console.error('[VACFA Bot] Error: Neither Google Chrome nor Microsoft Edge was found on this system.');
+    process.exit(1);
+  }
+
+  const browserName = browserBin.toLowerCase().includes('edge') ? 'Microsoft Edge' : 'Google Chrome';
+  console.log(`[VACFA Bot] Detected browser engine: ${browserName}`);
+  console.log(`[VACFA Bot] Binary path: ${browserBin}`);
+
+  // Create isolated profile dir
+  const profileDir = path.join(os.homedir(), '.gemini', 'antigravity', 'teams-bot-profile');
+  if (!fs.existsSync(profileDir)) {
+    fs.mkdirSync(profileDir, { recursive: true });
+  }
+
+  const browserArgs = [
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-blink-features=AutomationControlled',
+    '--use-fake-ui-for-media-stream',
+    '--autoplay-policy=no-user-gesture-required',
+    '--window-size=1280,800',
+    `--user-data-dir=${profileDir}`,
+    `--remote-debugging-port=${DEBUG_PORT}`,
+    MEETING_URL,
+  ];
+
+  console.log(`[VACFA Bot] Launching ${browserName} with WebRTC auto-join flags...`);
+  const browserProcess = spawn(browserBin, browserArgs, {
+    detached: false,
+    stdio: 'ignore',
+  });
+
+  browserProcess.on('error', (err) => {
+    console.error('[VACFA Bot] Failed to launch browser process:', err.message);
+  });
+
+  browserProcess.on('exit', (code) => {
+    console.log(`[VACFA Bot] Browser process exited with code ${code}.`);
+    process.exit(0);
+  });
+
+  // Periodically check CART status if URL provided
+  if (CART_URL) {
+    setTimeout(async () => {
+      console.log('[VACFA Bot] Checking Teams CART caption status...');
+      const ok = await sendCartCaption(CART_URL, 'VACFA AI Interpreter linked to Teams captions banner.');
+      if (ok) {
+        console.log('[VACFA Bot] CART Endpoint: ACTIVE (Captions successfully delivering into Teams)');
+      } else {
+        console.log('[VACFA Bot] Note: CART endpoint waiting for meeting to start or organizer approval.');
+      }
+    }, 3000);
+  }
+
+  // Connect to Chrome DevTools Protocol to inject in-meeting controller
+  async function attachCDP() {
+    let attempts = 0;
+    const maxAttempts = 30;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      await new Promise((r) => setTimeout(r, 1000));
+
+      try {
+        const pages = await new Promise((resolve, reject) => {
+          http.get(`http://127.0.0.1:${DEBUG_PORT}/json`, (res) => {
+            let data = '';
+            res.on('data', (c) => (data += c));
+            res.on('end', () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch {
+                resolve([]);
+              }
+            });
+          }).on('error', reject);
+        });
+
+        const teamsPage = pages.find((p) => p.type === 'page' && p.url.includes('teams.microsoft.com'));
+        if (teamsPage && teamsPage.webSocketDebuggerUrl) {
+          console.log(`[VACFA Bot] Connected to Teams browser page via CDP.`);
+          
+          if (typeof WebSocket !== 'undefined') {
+            const ws = new WebSocket(teamsPage.webSocketDebuggerUrl);
+
+            ws.on('open', () => {
+              console.log('[VACFA Bot] CDP WebSocket stream established.');
+              
+              // Enable Runtime & Page
+              ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable' }));
+              ws.send(JSON.stringify({ id: 2, method: 'Page.enable' }));
+
+              // Inject in-meeting controller script every 2.5 seconds to cover navigation
+              const injectInterval = setInterval(() => {
+                ws.send(JSON.stringify({
+                  id: 3,
+                  method: 'Runtime.evaluate',
+                  params: {
+                    expression: IN_MEETING_CONTROLLER_SCRIPT,
+                    returnByValue: false,
+                  }
+                }));
+              }, 2500);
+
+              ws.on('message', (msg) => {
+                try {
+                  const ev = JSON.parse(msg.toString());
+                  if (ev.method === 'Runtime.consoleAPICalled') {
+                    const text = ev.params.args.map((a) => a.value || a.description || '').join(' ');
+                    if (text.includes('[VACFA')) {
+                      console.log(text);
+                    }
+                  }
+                } catch {}
+              });
+
+              ws.on('close', () => {
+                clearInterval(injectInterval);
+              });
+            });
+
+            return;
+          }
+        }
+      } catch (err) {
+        // Retrying connection
+      }
+    }
+
+    console.log('[VACFA Bot] Browser running. Teams window open on screen.');
+  }
+
+  attachCDP();
+
+  console.log(`\n=============================================================================`);
+  console.log(`  VACFA Bot Status: RUNNING`);
+  console.log(`  1. The browser window has opened to your Teams meeting.`);
+  console.log(`  2. Display name will be pre-filled as "${BOT_NAME}".`);
+  console.log(`  3. In Teams, admit the bot if prompted in the lobby.`);
+  console.log(`  Press Ctrl+C in this terminal to stop the bot.`);
+  console.log(`=============================================================================\n`);
+}
+
+main().catch(console.error);

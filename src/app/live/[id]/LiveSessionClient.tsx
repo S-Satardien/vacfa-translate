@@ -251,6 +251,67 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     return () => unsubscribe();
   }, [isPresenterMicLive, playCaptionAudio]);
 
+  // Microsoft Teams Bot Ingestion Relay Bridge (Port 9876)
+  const [isBotRelayConnected, setIsBotRelayConnected] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: any = null;
+
+    function connectBotBridge() {
+      try {
+        eventSource = new EventSource('http://127.0.0.1:9876/events');
+
+        eventSource.onopen = () => {
+          setIsBotRelayConnected(true);
+        };
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'caption') {
+              const cap: CaptionEntry = data.caption;
+              setCaptions((prev) => {
+                // Avoid rendering exact duplicate caption if already received within last 4 items
+                const isDup = prev.slice(-4).some(
+                  (c) => c.originalText.trim().toLowerCase() === cap.originalText.trim().toLowerCase()
+                );
+                if (isDup) return prev;
+                return [...prev, cap];
+              });
+              setPartialText('');
+              setCurrentSpeaker(cap.speaker);
+              playCaptionAudio(cap);
+            } else if (data.type === 'interim') {
+              setCurrentSpeaker(data.speaker || 'Teams Speaker');
+              setPartialText(data.text);
+            } else if (data.type === 'bot_status') {
+              setIsBotRelayConnected(Boolean(data.connected));
+            }
+          } catch {}
+        };
+
+        eventSource.onerror = () => {
+          setIsBotRelayConnected(false);
+          eventSource?.close();
+          reconnectTimeout = setTimeout(connectBotBridge, 3000);
+        };
+      } catch {
+        setIsBotRelayConnected(false);
+        reconnectTimeout = setTimeout(connectBotBridge, 3000);
+      }
+    }
+
+    connectBotBridge();
+
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      eventSource?.close();
+    };
+  }, [playCaptionAudio]);
+
   // Setup Speech Recognition Controller
   useEffect(() => {
     const speakerLabel =
@@ -651,7 +712,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
               <h1 className={styles.title} style={{ margin: 0 }}>{currentSession.name}</h1>
-              {currentSession.meetingIntegration?.botEnabled && (
+              {(currentSession.meetingIntegration?.botEnabled || isBotRelayConnected) && (
                 <span style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -660,11 +721,12 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   fontWeight: 600,
                   padding: '2px 8px',
                   borderRadius: '999px',
-                  background: 'rgba(84, 91, 199, 0.2)',
-                  color: '#8E96F7',
-                  border: '1px solid rgba(84, 91, 199, 0.4)',
+                  background: isBotRelayConnected ? 'rgba(76, 175, 80, 0.18)' : 'rgba(84, 91, 199, 0.2)',
+                  color: isBotRelayConnected ? 'var(--success)' : '#8E96F7',
+                  border: `1px solid ${isBotRelayConnected ? 'var(--success)' : 'rgba(84, 91, 199, 0.4)'}`,
                 }}>
-                  <Bot size={12} /> {currentSession.meetingIntegration.platform.toUpperCase()} Bot
+                  <Bot size={12} className={isBotRelayConnected ? 'animate-pulse' : ''} />
+                  {isBotRelayConnected ? 'Teams Bot Linked (Hearing All Attendees)' : `${currentSession.meetingIntegration?.platform?.toUpperCase() || 'TEAMS'} Bot Standby`}
                 </span>
               )}
             </div>
@@ -673,6 +735,25 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
           {/* Presenter Live Mic Broadcast Action */}
           <div style={{ marginBottom: '1.25rem' }}>
+            {isBotRelayConnected && !isPresenterMicLive && (
+              <div
+                style={{
+                  background: 'rgba(76, 175, 80, 0.1)',
+                  border: '1px solid rgba(76, 175, 80, 0.3)',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  marginBottom: '8px',
+                  fontSize: '0.75rem',
+                  color: 'var(--success)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Bot size={13} className="animate-pulse" />
+                <span>Teams Bot is actively hearing and translating all meeting participants.</span>
+              </div>
+            )}
             <button
               onClick={togglePresenterMic}
               style={{

@@ -43,6 +43,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
   const [channels, setChannels] = useState<InterpretationChannelStatus[]>([]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedFrLink, setCopiedFrLink] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [monitoringLang, setMonitoringLang] = useState<string | null>(null);
   const [floorLanguage, setFloorLanguage] = useState<'auto' | 'en' | 'fr' | 'pt' | 'sw'>('auto');
@@ -241,6 +242,26 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
     navigator.clipboard.writeText(url);
     setCopiedFrLink(true);
     setTimeout(() => setCopiedFrLink(false), 2000);
+  };
+
+  const getBotRunnerCommand = () => {
+    if (!session) return '';
+    const mUrl = meeting.meetingUrl || 'https://teams.microsoft.com/meet/...';
+    const cUrl = cartUrl.trim() || '';
+    const sUrl = typeof window !== 'undefined'
+      ? `${window.location.origin}${process.env.NODE_ENV === 'production' ? '/vacfa-translate' : ''}/live/${session.id}`
+      : `https://s-satardien.github.io/vacfa-translate/live/${session.id}`;
+    const code = session.sessionCode;
+
+    return `node scripts/teams-bot-runner.js "${mUrl}" "${cUrl}" "${sUrl}" "${code}"`;
+  };
+
+  const handleCopyBotCommand = () => {
+    const cmd = getBotRunnerCommand();
+    if (!cmd) return;
+    navigator.clipboard.writeText(cmd);
+    setCopiedCommand(true);
+    setTimeout(() => setCopiedCommand(false), 2000);
   };
 
   const handleFloorLanguageChange = (lang: 'auto' | 'en' | 'fr' | 'pt' | 'sw') => {
@@ -1040,11 +1061,21 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
 
               {/* Automated CLI Runner Guide */}
               <div style={{ background: 'rgba(0, 0, 0, 0.35)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '12px 14px' }}>
-                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--white)', marginBottom: '4px' }}>
-                  Self-Hosted Bot Runner (Playwright / Chromium)
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--white)' }}>
+                    Multi-Speaker Virtual Bot Runner (Captures All Attendees)
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={copiedCommand ? <Check size={13} /> : <Copy size={13} />}
+                    onClick={handleCopyBotCommand}
+                  >
+                    {copiedCommand ? 'Command Copied!' : 'Copy Bot Command'}
+                  </Button>
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--grey-400)', marginBottom: '8px' }}>
-                  You can also launch the virtual bot directly into any meeting link from your terminal or server:
+                <div style={{ fontSize: '0.75rem', color: 'var(--grey-400)', marginBottom: '8px', lineHeight: 1.4 }}>
+                  Launches an automated attendee that enables Teams Live Captions to transcribe all meeting speakers, runs Gemini 3.8 Flash translation, and streams live to this session:
                 </div>
                 <code
                   style={{
@@ -1052,15 +1083,20 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
                     background: 'rgba(0, 0, 0, 0.6)',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    fontSize: '0.75rem',
+                    fontSize: '0.73rem',
                     color: '#8E96F7',
                     fontFamily: 'monospace',
                     overflowX: 'auto',
                     userSelect: 'all',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
                   }}
                 >
-                  node scripts/teams-bot-runner.js &quot;{meeting.meetingUrl || 'https://teams.microsoft.com/meet/...'}&quot;
+                  {getBotRunnerCommand()}
                 </code>
+                <div style={{ fontSize: '0.72rem', color: 'var(--grey-400)', marginTop: '6px' }}>
+                  Windows shortcut: run <code>run-teams-bot.bat &quot;{meeting.meetingUrl || 'https://teams.microsoft.com/meet/...'}&quot;</code>
+                </div>
               </div>
             </div>
 

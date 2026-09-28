@@ -76,7 +76,7 @@ export async function sendTeamsCartCaption(
         method: 'POST',
         mode: 'no-cors',
         headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Type': 'text/plain',
         },
         body: payload,
       });
@@ -95,21 +95,44 @@ export async function sendTeamsCartCaption(
 }
 
 /**
+ * Checks whether a given URL matches Microsoft Teams CART caption formats:
+ * - Modern Teams: https://api.captions.office.microsoft.com/cartcaption?meetingid=...&token=...
+ * - Classic Teams: https://*.api.teams.skype.com/v1/meetings/.../cartcaptions?token=...
+ */
+export function isValidTeamsCartUrl(url: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const clean = url.trim().toLowerCase();
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) return false;
+
+  const hasTeamsDomain =
+    clean.includes('captions.office.microsoft.com') ||
+    clean.includes('teams.skype.com') ||
+    clean.includes('teams.microsoft.com') ||
+    clean.includes('office.com') ||
+    clean.includes('skype.com');
+  const hasCartPath = clean.includes('cartcaption') || clean.includes('cart');
+  const hasToken = clean.includes('token=');
+
+  return (hasTeamsDomain && hasCartPath) || (hasCartPath && hasToken) || (clean.startsWith('https://') && hasToken);
+}
+
+/**
  * Sends an initial test subtitle to verify Teams CART connectivity.
  *
  * @param cartUrl - The Teams CART URL to test
  * @returns Verification result with descriptive message
  */
 export async function testTeamsCartConnection(cartUrl: string): Promise<TeamsCartResponse> {
-  if (!cartUrl || !cartUrl.includes('teams.skype.com') && !cartUrl.includes('cartcaptions')) {
+  const cleanUrl = cartUrl.trim();
+  if (!isValidTeamsCartUrl(cleanUrl)) {
     return {
       success: false,
-      error: 'Invalid Teams CART URL. Format must include api.teams.skype.com/.../cartcaptions?token=...',
+      error: 'Invalid Teams CART URL. Format should be from Teams Meeting Options: https://api.captions.office.microsoft.com/cartcaption?... or https://...api.teams.skype.com/...',
     };
   }
 
   const testText = 'VACFA AI Interpretation active. Live captions connected.';
-  const res = await sendTeamsCartCaption(cartUrl, testText, {
+  const res = await sendTeamsCartCaption(cleanUrl, testText, {
     speaker: 'VACFA Interpreter',
   });
 

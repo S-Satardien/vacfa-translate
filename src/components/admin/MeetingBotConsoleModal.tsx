@@ -115,45 +115,64 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
     };
   }, []);
 
+  const onSessionUpdatedRef = useRef(onSessionUpdated);
+  useEffect(() => {
+    onSessionUpdatedRef.current = onSessionUpdated;
+  }, [onSessionUpdated]);
+
+  const activeSessionIdRef = useRef<string | null>(null);
+
   // Initialize or rebind bot controller when active session changes
   useEffect(() => {
     if (!session || !isOpen) {
-      controllerRef.current?.stopAudioCapture();
-      controllerRef.current?.stopSimulatedRelay();
-      controllerRef.current = null;
+      if (controllerRef.current) {
+        controllerRef.current.stopAudioCapture();
+        controllerRef.current.stopSimulatedRelay();
+        controllerRef.current = null;
+      }
       ttsRef.current?.stop();
       setMonitoringLang(null);
+      activeSessionIdRef.current = null;
       return;
     }
 
-    setBotStatus(session.meetingIntegration?.botStatus || 'idle');
-    setStatusDetails(session.meetingIntegration?.lastStatusMessage || '');
+    // Only instantiate controller once per session
+    if (activeSessionIdRef.current !== session.id || !controllerRef.current) {
+      activeSessionIdRef.current = session.id;
+      setBotStatus(session.meetingIntegration?.botStatus || 'idle');
+      setStatusDetails(session.meetingIntegration?.lastStatusMessage || '');
 
-    const controller = createMeetingBotController(session, {
-      onStatusChange: (status, details) => {
-        setBotStatus(status);
-        if (details) setStatusDetails(details);
-        onSessionUpdated?.();
-      },
-      onAudioLevel: (level) => {
-        setAudioLevel(level);
-      },
-      onChannelUpdate: (updated) => {
-        setChannels([...updated]);
-      },
-      onError: (err) => {
-        setErrorMessage(err);
-      },
-    });
+      const controller = createMeetingBotController(session, {
+        onStatusChange: (status, details) => {
+          setBotStatus(status);
+          if (details) setStatusDetails(details);
+          onSessionUpdatedRef.current?.();
+        },
+        onAudioLevel: (level) => {
+          setAudioLevel(level);
+        },
+        onChannelUpdate: (updated) => {
+          setChannels([...updated]);
+        },
+        onError: (err) => {
+          setErrorMessage(err);
+        },
+      });
 
-    controllerRef.current = controller;
-    setChannels(controller.getChannels());
+      controllerRef.current = controller;
+      setChannels(controller.getChannels());
+    }
+  }, [session?.id, isOpen]);
 
-    return () => {
-      controller.stopAudioCapture();
-      controller.stopSimulatedRelay();
-    };
-  }, [session, isOpen, onSessionUpdated]);
+  const handleInviteBot = async () => {
+    if (!controllerRef.current) return;
+    setErrorMessage('');
+    try {
+      await controllerRef.current.dispatch();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to dispatch bot');
+    }
+  };
 
   if (!session) return null;
 
@@ -356,9 +375,25 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
                   <Button
                     variant="primary"
                     icon={<Bot size={16} />}
-                    onClick={() => controllerRef.current?.dispatch()}
+                    onClick={handleInviteBot}
                   >
                     Invite Bot to Meeting
+                  </Button>
+                ) : botStatus === 'dispatching' ? (
+                  <Button
+                    disabled
+                    variant="primary"
+                    icon={<Bot size={16} className="animate-spin" />}
+                  >
+                    Connecting Bot to Meeting...
+                  </Button>
+                ) : botStatus === 'in_lobby' ? (
+                  <Button
+                    disabled
+                    variant="outline"
+                    icon={<Bot size={16} className="animate-pulse" />}
+                  >
+                    Waiting in Meeting Lobby...
                   </Button>
                 ) : botStatus === 'streaming' ? (
                   <>

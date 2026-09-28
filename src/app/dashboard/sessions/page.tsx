@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Badge } from '@/components/ui/Badge';
@@ -52,9 +52,14 @@ export default function SessionsManager() {
   const [formBotName, setFormBotName] = useState('VACFA AI Interpreter');
   const [selectedLangCodes, setSelectedLangCodes] = useState<string[]>(['en', 'fr', 'pt', 'sw']);
 
-  const loadSessions = () => {
-    setSessions(getAllSessions());
-  };
+  const loadSessions = useCallback(() => {
+    const all = getAllSessions();
+    setSessions(all);
+    setActiveConsoleSession((prev) => {
+      if (!prev) return null;
+      return all.find((s) => s.id === prev.id) || prev;
+    });
+  }, []);
 
   useEffect(() => {
     loadSessions();

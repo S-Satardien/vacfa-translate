@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -42,9 +42,14 @@ export default function IntegrationsPage() {
     }
   };
 
-  const loadSessions = () => {
-    setSessions(getAllSessions());
-  };
+  const loadSessions = useCallback(() => {
+    const all = getAllSessions();
+    setSessions(all);
+    setActiveConsoleSession((prev) => {
+      if (!prev) return null;
+      return all.find((s) => s.id === prev.id) || prev;
+    });
+  }, []);
 
   useEffect(() => {
     loadSessions();

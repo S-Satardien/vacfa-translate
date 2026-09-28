@@ -27,6 +27,9 @@ const CART_URL = process.argv[3] || process.env.TEAMS_CART_URL;
 const BOT_NAME = process.env.BOT_NAME || 'VACFA AI Interpreter';
 const BOT_EMAIL = process.env.BOT_EMAIL || 'bot@vacfa-translate.org';
 const DEBUG_PORT = process.env.DEBUG_PORT || 9222;
+const SESSION_URL = process.argv[4] || process.env.SESSION_URL || 'https://s-satardien.github.io/vacfa-translate/live/session-001';
+const JOIN_CODE = process.env.JOIN_CODE || '482916';
+const CHAT_ANNOUNCEMENT = `🌐 VACFA AI Live Interpretation is active for this meeting! 🎧 Listen in French, Portuguese, or Swahili: ${SESSION_URL} (or join via code ${JOIN_CODE} at https://s-satardien.github.io/vacfa-translate/join)`;
 
 if (!MEETING_URL) {
   console.log(`
@@ -192,6 +195,7 @@ const IN_MEETING_CONTROLLER_SCRIPT = `
       clearInterval(preJoinInterval);
       console.log('[VACFA Bot] Connected inside Teams meeting call!');
       startActiveSpeakerMonitor();
+      setTimeout(sendChatAnnouncement, 2000);
     }
   }, 1000);
 
@@ -218,6 +222,59 @@ const IN_MEETING_CONTROLLER_SCRIPT = `
         }
       }
     }, 500);
+  }
+
+  // Step 3: Post Welcome & Translation URLs into Teams Meeting Chat
+  function sendChatAnnouncement() {
+    if (window.__VACFA_CHAT_ANNOUNCED__) return;
+
+    // Check for chat button on toolbar
+    const chatBtn = document.querySelector(
+      'button[data-tid="chat-button"], button#chat-button, button[aria-label*="chat" i], button[aria-label*="conversation" i]'
+    );
+
+    if (chatBtn) {
+      // If chat pane not already open
+      const chatPane = document.querySelector('div[data-tid="chat-pane"], div[aria-label*="Meeting chat" i]');
+      if (!chatPane) {
+        console.log('[VACFA Bot] Opening Teams chat pane...');
+        chatBtn.click();
+      }
+
+      setTimeout(() => {
+        const chatInput = document.querySelector(
+          'div[data-tid="ckeditor-message-input"], div[contenteditable="true"][role="textbox"], div[aria-label*="Type a message" i]'
+        );
+
+        if (chatInput && !window.__VACFA_CHAT_ANNOUNCED__) {
+          window.__VACFA_CHAT_ANNOUNCED__ = true;
+          chatInput.focus();
+          
+          const announcement = "${CHAT_ANNOUNCEMENT}";
+          
+          try {
+            document.execCommand('insertText', false, announcement);
+          } catch {
+            chatInput.innerText = announcement;
+          }
+          chatInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+          setTimeout(() => {
+            const sendBtn = document.querySelector(
+              'button[data-tid="send-message-button"], button#send-message-button, button[aria-label*="Send" i]'
+            );
+            if (sendBtn && !sendBtn.disabled) {
+              console.log('[VACFA Bot] Posting translation link into Teams meeting chat...');
+              sendBtn.click();
+            } else {
+              chatInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+            }
+          }, 800);
+        } else if (!chatInput) {
+          console.log('[VACFA Bot] In-meeting chat not accessible (may be restricted to tenant members).');
+        }
+      }, 1500);
+    }
   }
 })();
 `;
@@ -364,6 +421,10 @@ async function main() {
   console.log(`  1. The browser window has opened to your Teams meeting.`);
   console.log(`  2. Display name will be pre-filled as "${BOT_NAME}".`);
   console.log(`  3. In Teams, admit the bot if prompted in the lobby.`);
+  console.log(`  4. Live Session Link for Attendees:`);
+  console.log(`     ${SESSION_URL}`);
+  console.log(`  5. In-Meeting Chat Announcement (auto-posted upon admission):`);
+  console.log(`     "${CHAT_ANNOUNCEMENT}"`);
   console.log(`  Press Ctrl+C in this terminal to stop the bot.`);
   console.log(`=============================================================================\n`);
 }

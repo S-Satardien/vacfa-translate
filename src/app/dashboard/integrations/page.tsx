@@ -243,12 +243,12 @@ export default function IntegrationsPage() {
                         variant={meeting.botStatus === 'streaming' ? 'live' : meeting.botStatus === 'connected' ? 'active' : 'upcoming'}
                         pulse={meeting.botStatus === 'streaming'}
                       >
-                        {meeting.botStatus.toUpperCase()}
+                        {(meeting.botStatus || 'idle').toUpperCase()}
                       </Badge>
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        {session.languages.filter((l) => l.code !== 'en').map((lang) => (
+                        {(session.languages || []).filter((l) => l && l.code !== 'en').map((lang) => (
                           <span 
                             key={lang.code}
                             style={{
@@ -259,7 +259,7 @@ export default function IntegrationsPage() {
                               fontWeight: 600,
                             }}
                           >
-                            {lang.code.toUpperCase()}
+                            {(lang.code || '').toUpperCase()}
                           </span>
                         ))}
                       </div>

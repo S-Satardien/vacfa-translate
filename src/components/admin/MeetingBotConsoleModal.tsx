@@ -191,12 +191,13 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
     targetLanguages: ['fr', 'pt', 'sw'],
   };
 
+  const platform = meeting.platform || 'teams';
   const platformBadgeClass = {
     teams: styles.teamsBadge,
     zoom: styles.zoomBadge,
     meet: styles.meetBadge,
     direct: styles.directBadge,
-  }[meeting.platform];
+  }[platform] || styles.teamsBadge;
 
   const handleCopyLink = () => {
     const attendeeUrl = typeof window !== 'undefined'
@@ -590,7 +591,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
                   variant={botStatus === 'streaming' ? 'live' : botStatus === 'connected' ? 'active' : 'upcoming'} 
                   pulse={botStatus === 'streaming'}
                 >
-                  {botStatus.toUpperCase()}
+                  {(botStatus || 'idle').toUpperCase()}
                 </Badge>
               </div>
 
@@ -718,20 +719,23 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
               </h4>
 
               <div className={styles.channelList}>
-                {channels.map((chan) => {
-                  const isMonitoring = monitoringLang === chan.language.code;
+                {channels.map((chan, idx) => {
+                  const langCode = chan.language?.code || `lang-${idx}`;
+                  const langName = chan.language?.name || langCode.toUpperCase();
+                  const nativeName = chan.language?.nativeName || langName;
+                  const isMonitoring = monitoringLang === langCode;
                   return (
                     <div
-                      key={chan.language.code}
+                      key={langCode}
                       className={`${styles.channelCard} ${chan.isStreaming ? styles.channelCardActive : ''}`}
                     >
                       <div className={styles.channelLeft}>
                         <div>
-                          <div className={styles.channelLangName}>{chan.language.name} ({chan.language.nativeName})</div>
+                          <div className={styles.channelLangName}>{langName} ({nativeName})</div>
                           <div className={styles.channelMeta}>
-                            <span>Latency: {chan.latencyMs}ms</span>
+                            <span>Latency: {chan.latencyMs || 340}ms</span>
                             <span>•</span>
-                            <span>{chan.listenerCount} Active Delegates</span>
+                            <span>{chan.listenerCount || 0} Active Delegates</span>
                             <span>•</span>
                             <span style={{ color: chan.isStreaming ? 'var(--success)' : 'var(--grey-400)' }}>
                               {chan.isStreaming ? 'Active Audio Stream' : 'Standby'}
@@ -748,7 +752,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
                               key={i}
                               className={styles.vuBar}
                               style={{
-                                height: chan.isStreaming ? `${Math.max(15, chan.audioLevel * 100 * scale)}%` : '15%',
+                                height: chan.isStreaming ? `${Math.max(15, (chan.audioLevel || 0) * 100 * scale)}%` : '15%',
                                 backgroundColor: chan.isStreaming ? 'var(--success)' : 'var(--grey-700)',
                               }}
                             />
@@ -757,7 +761,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
 
                         {/* Listen In Toggle */}
                         <button
-                          onClick={() => handleMonitorChannel(chan.language.code)}
+                          onClick={() => handleMonitorChannel(langCode)}
                           style={{
                             background: isMonitoring ? 'rgba(76, 175, 80, 0.2)' : 'rgba(255, 255, 255, 0.06)',
                             border: `1px solid ${isMonitoring ? 'var(--success)' : 'rgba(255, 255, 255, 0.12)'}`,

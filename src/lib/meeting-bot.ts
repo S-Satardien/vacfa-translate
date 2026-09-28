@@ -7,7 +7,7 @@
  * VACFA medical glossary preservation, and routes multi-language audio streams to interpretation channels.
  */
 
-import type { Session, MeetingBotStatus, InterpretationChannelStatus, CaptionEntry } from './types';
+import type { Session, MeetingBotStatus, InterpretationChannelStatus, CaptionEntry, Language } from './types';
 import { updateMeetingIntegration } from './session-store';
 import { broadcastMeetingBotUpdate, broadcastCaptionFinal, broadcastCaptionInterim, broadcastMicStatus, getActiveSessionGlossary } from './live-sync';
 import { translateText } from './gemini-translator';
@@ -66,9 +66,17 @@ export function createMeetingBotController(
   let recognizer: ReturnType<typeof createSpeechRecognitionController> | null = null;
   let floorLanguage: string = session.meetingIntegration?.sourceLanguage || 'auto';
 
-  // Initialize channels based on session languages
-  const targetLangs = session.languages.filter((l) => l.code !== 'en');
-  let channels: InterpretationChannelStatus[] = targetLangs.map((lang) => ({
+  // Initialize channels based on session languages safely
+  const rawLangs = Array.isArray(session?.languages) ? session.languages : [];
+  const validLangs = rawLangs.filter((l) => l && typeof l === 'object' && l.code);
+  const targetLangs = validLangs.filter((l) => l.code !== 'en');
+  const defaultFallbackChannels: Language[] = [
+    { code: 'fr', name: 'French', nativeName: 'Français' },
+    { code: 'pt', name: 'Portuguese', nativeName: 'Português' },
+    { code: 'sw', name: 'Swahili', nativeName: 'Kiswahili' },
+  ];
+
+  let channels: InterpretationChannelStatus[] = (targetLangs.length > 0 ? targetLangs : defaultFallbackChannels).map((lang) => ({
     language: lang,
     isStreaming: false,
     latencyMs: 340 + Math.floor(Math.random() * 40),

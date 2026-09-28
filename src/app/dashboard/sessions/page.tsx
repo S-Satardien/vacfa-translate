@@ -348,9 +348,9 @@ export default function SessionsManager() {
 
               {/* Interpretation Channels Badges */}
               <div className={styles.sessionLanguages}>
-                {session.languages.map((lang) => (
-                  <Badge key={lang.code} variant={lang.code === 'en' ? 'category' : 'active'}>
-                    {lang.code.toUpperCase()}: {lang.name}
+                {(session.languages || []).map((lang) => (
+                  <Badge key={lang.code || lang.name} variant={lang.code === 'en' ? 'category' : 'active'}>
+                    {(lang.code || '').toUpperCase()}: {lang.name}
                   </Badge>
                 ))}
               </div>

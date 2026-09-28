@@ -79,25 +79,83 @@ const DEFAULT_ENRICHED_SESSIONS: Session[] = SESSIONS.map((session, index) => {
 });
 
 /**
+ * Sanitizes a raw session object from LocalStorage or API, ensuring all properties
+ * (especially languages, meetingIntegration, and status) are strictly defined and type-safe.
+ */
+export function sanitizeSession(s: any): Session {
+  const assignedLanguages: Language[] = Array.isArray(s?.languages) && s.languages.length > 0
+    ? s.languages.map((l: any) => {
+        if (typeof l === 'string') {
+          const match = CORE_LANGUAGES.find((cl) => cl.code === l);
+          return match || { code: l, name: l.toUpperCase(), nativeName: l };
+        }
+        return {
+          code: l?.code || 'en',
+          name: l?.name || 'English',
+          nativeName: l?.nativeName || l?.name || 'English',
+          listenerCount: typeof l?.listenerCount === 'number' ? l.listenerCount : 0,
+        };
+      })
+    : CORE_LANGUAGES;
+
+  const meetingIntegration: MeetingIntegration | undefined = s?.meetingIntegration
+    ? {
+        platform: s.meetingIntegration.platform || 'teams',
+        meetingUrl: s.meetingIntegration.meetingUrl || '',
+        meetingId: s.meetingIntegration.meetingId || '',
+        passcode: s.meetingIntegration.passcode || '',
+        botEnabled: Boolean(s.meetingIntegration.botEnabled),
+        botName: s.meetingIntegration.botName || 'VACFA AI Interpreter',
+        botStatus: s.meetingIntegration.botStatus || 'idle',
+        sourceLanguage: s.meetingIntegration.sourceLanguage || 'en',
+        targetLanguages: Array.isArray(s.meetingIntegration.targetLanguages) && s.meetingIntegration.targetLanguages.length > 0
+          ? s.meetingIntegration.targetLanguages
+          : ['fr', 'pt', 'sw'],
+        teamsCartUrl: s.meetingIntegration.teamsCartUrl || '',
+        teamsCartLanguage: s.meetingIntegration.teamsCartLanguage || 'fr',
+        lastStatusMessage: s.meetingIntegration.lastStatusMessage || '',
+      }
+    : undefined;
+
+  return {
+    id: s?.id || `session-${Date.now()}`,
+    name: s?.name || 'Conference Session',
+    organiser: s?.organiser || 'VACFA Secretariat',
+    date: s?.date || new Date().toISOString().split('T')[0],
+    time: s?.time || '10:00',
+    sessionCode: s?.sessionCode || '100000',
+    languages: assignedLanguages,
+    status: s?.status || 'upcoming',
+    delegateCount: typeof s?.delegateCount === 'number' ? s.delegateCount : 0,
+    description: s?.description || '',
+    meetingIntegration,
+  };
+}
+
+/**
  * Retrieves all sessions, merging LocalStorage customized sessions with initial defaults.
  * 
  * @returns Array of all active, upcoming, and historic sessions.
  */
 export function getAllSessions(): Session[] {
   if (typeof window === 'undefined') {
-    return DEFAULT_ENRICHED_SESSIONS;
+    return DEFAULT_ENRICHED_SESSIONS.map(sanitizeSession);
   }
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_ENRICHED_SESSIONS));
-      return DEFAULT_ENRICHED_SESSIONS;
+      const sanitizedDefaults = DEFAULT_ENRICHED_SESSIONS.map(sanitizeSession);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizedDefaults));
+      return sanitizedDefaults;
     }
-    const parsed: Session[] = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_ENRICHED_SESSIONS;
+    const parsed: any[] = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.map(sanitizeSession);
+    }
+    return DEFAULT_ENRICHED_SESSIONS.map(sanitizeSession);
   } catch {
-    return DEFAULT_ENRICHED_SESSIONS;
+    return DEFAULT_ENRICHED_SESSIONS.map(sanitizeSession);
   }
 }
 

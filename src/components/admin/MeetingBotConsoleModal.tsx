@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { 
   Bot, Video, Mic, MicOff, Radio, Play, Square, 
   ExternalLink, Copy, Check, Volume2, VolumeX, AlertCircle,
-  Subtitles, Download, Layers, Settings2, Send, Info, Headphones
+  Subtitles, Download, Layers, Settings2, Send, Info, Headphones, Mail
 } from 'lucide-react';
 import type { Session, MeetingBotStatus, InterpretationChannelStatus } from '@/lib/types';
 import { createMeetingBotController, MeetingBotController } from '@/lib/meeting-bot';
@@ -48,7 +48,8 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
   const [showMultiSpeakerGuide, setShowMultiSpeakerGuide] = useState(false);
 
   // In-Meeting Tabs and Teams CART Integration State
-  const [activeTab, setActiveTab] = useState<'channels' | 'cart' | 'teams_app'>('channels');
+  const [activeTab, setActiveTab] = useState<'channels' | 'cart' | 'email_bot' | 'teams_app'>('channels');
+  const [copiedEmail, setCopiedEmail] = useState(false);
   const [cartUrl, setCartUrl] = useState(session?.meetingIntegration?.teamsCartUrl || '');
   const [cartLanguage, setCartLanguage] = useState(session?.meetingIntegration?.teamsCartLanguage || 'fr');
   const [cartTestStatus, setCartTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -363,11 +364,19 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
           </button>
 
           <button
+            className={`${styles.tabBtn} ${activeTab === 'email_bot' ? styles.tabBtnActive : ''}`}
+            onClick={() => setActiveTab('email_bot')}
+          >
+            <Mail size={15} />
+            <span>Invite Bot by Email</span>
+          </button>
+
+          <button
             className={`${styles.tabBtn} ${activeTab === 'teams_app' ? styles.tabBtnActive : ''}`}
             onClick={() => setActiveTab('teams_app')}
           >
             <Layers size={15} />
-            <span>Teams In-Meeting App</span>
+            <span>Teams App (.zip)</span>
           </button>
         </div>
 
@@ -947,7 +956,141 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
           </div>
         )}
 
-        {/* Tab 3: Teams In-Meeting App & Routing */}
+        {/* Tab 3: Invite Bot by Email (Bypasses Org App Blocking) */}
+        {activeTab === 'email_bot' && (
+          <div className={styles.cartSection}>
+            <div className={styles.teamsAppPackageCard} style={{ borderColor: 'rgba(76, 175, 80, 0.4)' }}>
+              <div className={styles.cartHeader}>
+                <h4 className={styles.cartTitle} style={{ color: 'var(--success)' }}>
+                  <Mail size={18} color="var(--success)" />
+                  Invite Virtual Attendee Bot via Email
+                </h4>
+                <Badge variant="active">BYPASSES ORG APP BLOCKING</Badge>
+              </div>
+
+              <p className={styles.cartDescription}>
+                If your university, hospital, or enterprise IT blocks custom Teams App Store installations (<code>.zip</code> uploads), use the <strong>Virtual Attendee Bot</strong>. The bot enters the call as a regular participant, hears all speakers over Teams WebRTC, and extracts active speaker names directly.
+              </p>
+
+              {/* Bot Email Address Copy Box */}
+              <div
+                style={{
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '10px',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '12px',
+                  marginBottom: '1rem',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--grey-400)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    VACFA Bot Calendar &amp; Invite Email
+                  </div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--white)', fontFamily: 'monospace' }}>
+                    bot@vacfa-translate.org
+                  </div>
+                </div>
+
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={copiedEmail ? <Check size={14} /> : <Copy size={14} />}
+                  onClick={() => {
+                    navigator.clipboard.writeText('bot@vacfa-translate.org');
+                    setCopiedEmail(true);
+                    setTimeout(() => setCopiedEmail(false), 2000);
+                  }}
+                >
+                  {copiedEmail ? 'Email Copied!' : 'Copy Bot Email'}
+                </Button>
+              </div>
+
+              {/* Two Core Advantages Card */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                  gap: '12px',
+                  marginBottom: '1rem',
+                }}
+              >
+                <div style={{ background: 'rgba(84, 91, 199, 0.12)', border: '1px solid rgba(84, 91, 199, 0.25)', borderRadius: '10px', padding: '12px' }}>
+                  <div style={{ color: '#8E96F7', fontWeight: 600, fontSize: '0.85rem', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Headphones size={15} /> 1. Hears All Meeting Speakers
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--cream)', lineHeight: 1.45 }}>
+                    Because the bot is an audio participant in the Teams room, Teams routes the mixed WebRTC stream of <strong>every attendee</strong> directly to it. You and others keep wearing normal headsets with zero audio rerouting.
+                  </div>
+                </div>
+
+                <div style={{ background: 'rgba(76, 175, 80, 0.12)', border: '1px solid rgba(76, 175, 80, 0.25)', borderRadius: '10px', padding: '12px' }}>
+                  <div style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.85rem', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Bot size={15} /> 2. Shows Speaker Names
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--cream)', lineHeight: 1.45 }}>
+                    The bot reads Microsoft Teams&apos; active speaker UI indicators in real-time, attributing each sentence to the actual person talking (e.g. <em>&quot;Dr. Amina Osei (FR): ...&quot;</em>).
+                  </div>
+                </div>
+              </div>
+
+              {/* Automated CLI Runner Guide */}
+              <div style={{ background: 'rgba(0, 0, 0, 0.35)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '12px 14px' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--white)', marginBottom: '4px' }}>
+                  Self-Hosted Bot Runner (Playwright / Chromium)
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--grey-400)', marginBottom: '8px' }}>
+                  You can also launch the virtual bot directly into any meeting link from your terminal or server:
+                </div>
+                <code
+                  style={{
+                    display: 'block',
+                    background: 'rgba(0, 0, 0, 0.6)',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    color: '#8E96F7',
+                    fontFamily: 'monospace',
+                    overflowX: 'auto',
+                    userSelect: 'all',
+                  }}
+                >
+                  node scripts/teams-bot-runner.js &quot;{meeting.meetingUrl || 'https://teams.microsoft.com/meet/...'}&quot;
+                </code>
+              </div>
+            </div>
+
+            {/* Step-by-Step Instructions */}
+            <div className={styles.instructionsBox}>
+              <h5 className={styles.instructionsTitle}>
+                <Info size={16} color="#7B83EB" /> How to invite the bot to a Teams Meeting or Webinar
+              </h5>
+              <ol className={styles.instructionSteps}>
+                <li>
+                  In <strong>Microsoft Outlook</strong> or <strong>Teams Calendar</strong>, open your meeting invite.
+                </li>
+                <li>
+                  In the <strong>&quot;Required Attendees&quot;</strong> field, add <code>bot@vacfa-translate.org</code>.
+                </li>
+                <li>
+                  Click <strong>Send Update</strong>.
+                </li>
+                <li>
+                  At the scheduled meeting time, <strong>VACFA AI Interpreter</strong> will join the call as an attendee.
+                </li>
+                <li>
+                  If your meeting has a waiting room/lobby enabled, the meeting host simply clicks <strong>&quot;Admit&quot;</strong> for the bot, and it immediately starts transcribing and translating all speakers!
+                </li>
+              </ol>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 4: Teams In-Meeting App & Routing */}
         {activeTab === 'teams_app' && (
           <div className={styles.cartSection}>
             <div className={styles.teamsAppPackageCard}>

@@ -678,6 +678,7 @@ async function main() {
     '--window-size=1280,800',
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
+    '--remote-allow-origins=*',
     MEETING_URL,
   ];
 
@@ -712,9 +713,9 @@ async function main() {
   // Connect to Chrome DevTools Protocol
   async function attachCDP() {
     let attempts = 0;
-    const maxAttempts = 35;
+    const WebSocketClient = require('ws');
 
-    while (attempts < maxAttempts) {
+    while (true) {
       attempts++;
       await new Promise((r) => setTimeout(r, 1000));
 
@@ -737,27 +738,53 @@ async function main() {
         if (teamsPage && teamsPage.webSocketDebuggerUrl) {
           console.log(`[VACFA Bot] Connected to Teams browser page via CDP.`);
 
-          if (typeof WebSocket !== 'undefined') {
-            const ws = new WebSocket(teamsPage.webSocketDebuggerUrl);
+          const ws = new WebSocketClient(teamsPage.webSocketDebuggerUrl);
 
-            ws.on('open', () => {
-              console.log('[VACFA Bot] CDP WebSocket stream established.');
+          ws.on('open', () => {
+            console.log('[VACFA Bot] CDP WebSocket stream established.');
 
-              // Enable Runtime & Page
-              ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable' }));
-              ws.send(JSON.stringify({ id: 2, method: 'Page.enable' }));
+            // Enable Runtime, Page, and Input
+            ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable' }));
+            ws.send(JSON.stringify({ id: 2, method: 'Page.enable' }));
 
-              // Periodically ensure in-meeting controller script is active
-              const injectInterval = setInterval(() => {
-                ws.send(JSON.stringify({
-                  id: 3,
-                  method: 'Runtime.evaluate',
-                  params: {
-                    expression: IN_MEETING_CONTROLLER_SCRIPT,
-                    returnByValue: false,
-                  },
-                }));
-              }, 2500);
+            // Trigger Ctrl+Shift+C via CDP hardware key event to ensure Live Captions are toggled
+            setTimeout(() => {
+              console.log('[VACFA Bot] Dispatching Ctrl+Shift+C hotkey to activate Teams Live Captions...');
+              ws.send(JSON.stringify({
+                id: 101,
+                method: 'Input.dispatchKeyEvent',
+                params: {
+                  type: 'rawKeyDown',
+                  windowsVirtualKeyCode: 67,
+                  modifiers: 10,
+                  code: 'KeyC',
+                  key: 'C',
+                },
+              }));
+              ws.send(JSON.stringify({
+                id: 102,
+                method: 'Input.dispatchKeyEvent',
+                params: {
+                  type: 'keyUp',
+                  windowsVirtualKeyCode: 67,
+                  modifiers: 10,
+                  code: 'KeyC',
+                  key: 'C',
+                },
+              }));
+            }, 8000);
+
+            // Periodically ensure in-meeting controller script is active
+            const injectInterval = setInterval(() => {
+              ws.send(JSON.stringify({
+                id: 3,
+                method: 'Runtime.evaluate',
+                params: {
+                  expression: IN_MEETING_CONTROLLER_SCRIPT,
+                  returnByValue: false,
+                },
+              }));
+            }, 2500);
 
               // Listen for console events from Teams client
               ws.on('message', async (msg) => {

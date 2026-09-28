@@ -14,6 +14,7 @@ import {
   Sparkles,
   CheckCircle2,
   Bot,
+  Play,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Session, CaptionEntry, GlossaryTerm } from '@/lib/types';
@@ -845,6 +846,39 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       <div className={styles.centerPanel}>
         {showCaptions ? (
           <div className={styles.captionsContainer}>
+            {captions.length === 0 && !partialText && (
+              <div style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--grey-400)' }}>
+                <div style={{ display: 'inline-flex', padding: '16px', borderRadius: '50%', background: 'rgba(196, 30, 58, 0.12)', color: 'var(--vacfa-red-light)', marginBottom: '1rem' }}>
+                  <Mic size={32} />
+                </div>
+                <h3 style={{ color: 'var(--white)', fontSize: '1.15rem', marginBottom: '0.5rem' }}>
+                  Waiting for Audio Feed
+                </h3>
+                <p style={{ maxWidth: '440px', margin: '0 auto 1.5rem', fontSize: '0.85rem', lineHeight: 1.5 }}>
+                  Click below to activate your microphone or inject sample conference speech to test the live translation channels.
+                </p>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Button
+                    variant="primary"
+                    icon={<Mic size={15} />}
+                    onClick={togglePresenterMic}
+                  >
+                    {isPresenterMicLive ? 'Microphone Active' : 'Start My Microphone'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    icon={<Play size={15} />}
+                    onClick={() => {
+                      if (simulatorRef.current) {
+                        simulatorRef.current.start();
+                      }
+                    }}
+                  >
+                    Simulate Test Speech
+                  </Button>
+                </div>
+              </div>
+            )}
             <AnimatePresence initial={false}>
               {captions.map((cap, index) => (
                 <motion.div

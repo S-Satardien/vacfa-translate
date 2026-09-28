@@ -9,6 +9,8 @@
  * 5. Web Speech Synthesis Fallback: Offline backup if network connection is interrupted.
  */
 
+import { getStoredApiKey } from './gemini-translator';
+
 interface SpeechSynthesisController {
   speak: (text: string, langCode: string) => void;
   stop: () => void;
@@ -126,7 +128,70 @@ function chunkTextForSpeech(text: string, maxLen = 140): string[] {
 }
 
 /**
- * Finds the most suitable browser voice for a target language code.
+ * Synthesizes speech via Google Gemini 3.8 Flash Neural TTS for native African pronunciation.
+ * Generates direct Base64 audio/wav for East African Kiswahili with 0ms CORS issues.
+ */
+async function playGeminiNeuralAudio(
+  chunk: string,
+  apiKey: string,
+  expectedGen: number
+): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${apiKey}`;
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: chunk }] }],
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) return false;
+    const data = await res.json();
+    const base64Wav = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Wav) return false;
+
+    if (queueGeneration !== expectedGen) return false;
+
+    return new Promise((resolve) => {
+      if (!persistentAudio) {
+        persistentAudio = new Audio();
+      }
+      const audio = persistentAudio;
+      currentAudioElement = audio;
+
+      audio.onended = () => {
+        resolve(true);
+      };
+      audio.onerror = () => {
+        resolve(false);
+      };
+
+      audio.src = `data:audio/wav;base64,${base64Wav}`;
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          if (err?.name === 'AbortError' || queueGeneration !== expectedGen) {
+            resolve(true);
+            return;
+          }
+          resolve(false);
+        });
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Finds the most suitable native African browser voice for a target language code.
+ * Strictly avoids western/American voice assignments (e.g. Microsoft David) for African languages.
  */
 function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null {
   if (typeof window === 'undefined' || !window.speechSynthesis) return null;
@@ -141,7 +206,7 @@ function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null 
     fr: ['fr-SN', 'fr-CI', 'fr-CD', 'fr-CM', 'fr-FR', 'fr-BE', 'fr-CH', 'fr'],
     pt: ['pt-AO', 'pt-MZ', 'pt-PT', 'pt-CV', 'pt-GW', 'pt-ST', 'pt'],
     sw: ['sw-KE', 'sw-TZ', 'sw-UG', 'sw', 'bnt'],
-    en: ['en-ZA', 'en-NG', 'en-KE', 'en-GB', 'en-US', 'en'],
+    en: ['en-ZA', 'en-NG', 'en-KE', 'en-GH', 'en-UG', 'en-TZ', 'en-GB'],
   };
 
   const candidatePrefixes = prefixMap[langCode] || [langCode];
@@ -152,11 +217,14 @@ function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null 
     if (exact) return exact;
   }
 
-  // 2. Prefix match on language tag (excluding pt-BR when looking for African/European Portuguese)
+  // 2. Prefix match on language tag (strictly excluding pt-BR for Portuguese and en-US for African English)
   for (const prefix of candidatePrefixes) {
     const partial = voices.find((v) => {
       const vLang = v.lang.toLowerCase();
       if (langCode === 'pt' && (vLang === 'pt-br' || vLang.startsWith('pt-br'))) {
+        return false;
+      }
+      if (langCode === 'en' && (vLang === 'en-us' || vLang.startsWith('en-us'))) {
         return false;
       }
       return vLang.startsWith(prefix.toLowerCase());
@@ -164,23 +232,76 @@ function getBestVoiceForLanguage(langCode: string): SpeechSynthesisVoice | null 
     if (partial) return partial;
   }
 
-  // 3. Name match on voice name
+  // 3. Name match on voice name (prioritizing authentic African neural & regional speaker models)
   const nameKeywords: Record<string, string[]> = {
-    fr: ['african french', 'français', 'french', 'hortense', 'julie', 'paul'],
-    pt: ['portugal', 'português (portugal)', 'angola', 'moçambique', 'portuguese (portugal)', 'helia', 'raquel', 'duarte'],
-    sw: ['swahili', 'kiswahili', 'kenya', 'tanzania', 'zuri', 'rafiki'],
-    en: ['south africa', 'nigeria', 'kenya', 'english (south africa)', 'english (united kingdom)', 'david', 'zira', 'mark'],
+    fr: ['côte d\'ivoire', 'cameroun', 'cameroon', 'senegal', 'sénégal', 'congo', 'african french', 'maurice', 'henri', 'français', 'french'],
+    pt: ['angola', 'moçambique', 'mozambique', 'portugal', 'português (portugal)', 'celeste', 'helia', 'raquel', 'duarte'],
+    sw: ['swahili', 'kiswahili', 'kenya', 'tanzania', 'asad', 'rehema', 'asilia', 'daudi', 'zuri', 'rafiki'],
+    en: ['south africa', 'nigeria', 'kenya', 'ghana', 'english (south africa)', 'leah', 'luke', 'ezinne', 'abeo', 'chilufya'],
   };
 
   const keywords = nameKeywords[langCode] || [];
   for (const kw of keywords) {
-    const match = voices.find((v) => v.name.toLowerCase().includes(kw));
+    const match = voices.find((v) => {
+      const vName = v.name.toLowerCase();
+      const vLang = v.lang.toLowerCase();
+      if (langCode === 'pt' && (vLang.startsWith('pt-br') || vName.includes('brasil') || vName.includes('brazil'))) {
+        return false;
+      }
+      if (langCode === 'en' && (vLang.startsWith('en-us') || vName.includes('united states') || vName.includes('david') || vName.includes('mark') || vName.includes('zira'))) {
+        return false;
+      }
+      return vName.includes(kw);
+    });
     if (match) return match;
   }
 
+  // 4. CRITICAL: Language-Specific African Voice Fallback
+  if (langCode === 'sw') {
+    // If no native Swahili voice pack is installed in the client browser:
+    // DO NOT allow the browser to fall back to an American English voice (Microsoft David) which butchers Swahili.
+    // Instead, select an African English voice (South African, Nigerian, Kenyan) or an African Romance voice
+    // that naturally possesses open vowel cadence and authentic African syllable timing:
+    const africanVoice = voices.find((v) => {
+      const vl = v.lang.toLowerCase();
+      const vn = v.name.toLowerCase();
+      return (
+        vl.startsWith('en-za') ||
+        vl.startsWith('en-ng') ||
+        vl.startsWith('en-ke') ||
+        vl.startsWith('fr-sn') ||
+        vl.startsWith('fr-ci') ||
+        vl.startsWith('pt-ao') ||
+        vn.includes('south africa') ||
+        vn.includes('nigeria') ||
+        vn.includes('kenya') ||
+        vn.includes('leah') ||
+        vn.includes('ezinne') ||
+        vn.includes('abeo')
+      );
+    });
+    if (africanVoice) return africanVoice;
+
+    // Secondary fallback: Clean acoustic vowel voice (Portuguese Portugal, Italian, or Spanish)
+    const pureAcousticVoice = voices.find((v) => {
+      const vl = v.lang.toLowerCase();
+      return (vl.startsWith('pt-pt') || vl.startsWith('it') || vl.startsWith('es')) && !vl.startsWith('pt-br');
+    });
+    if (pureAcousticVoice) return pureAcousticVoice;
+  }
+
+  if (langCode === 'en') {
+    // If no African English voice is found, prefer Commonwealth British English (non-rhotic) over US American
+    const commonwealthVoice = voices.find((v) => v.lang.toLowerCase().startsWith('en-gb'));
+    if (commonwealthVoice) return commonwealthVoice;
+  }
+
   if (langCode === 'pt') {
-    const anyPt = voices.find((v) => v.lang.toLowerCase().startsWith('pt'));
-    if (anyPt) return anyPt;
+    const anyPtNonBr = voices.find((v) => {
+      const vl = v.lang.toLowerCase();
+      return vl.startsWith('pt') && !vl.startsWith('pt-br');
+    });
+    if (anyPtNonBr) return anyPtNonBr;
   }
 
   return null;
@@ -237,48 +358,69 @@ function playAudioChunk(
       fallbackSpeechSynthesis(chunk, langCode, playbackRate, expectedGen).then(finish);
     };
 
-    const ttsLangMap: Record<string, string> = {
-      sw: 'sw', // Authentic East African Kiswahili neural voice
-      fr: 'fr', // French neural voice
-      pt: 'pt-PT', // African Lusophone (Angola, Mozambique) / European Portuguese (NOT Brazilian)
-      en: 'en', // English voice
-    };
+    const startStreamingAudio = () => {
+      if (isDone || queueGeneration !== expectedGen) return;
 
-    const ttsLang = ttsLangMap[langCode] || langCode;
-    const query = encodeURIComponent(chunk);
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${ttsLang}&client=tw-ob&q=${query}`;
+      const ttsLangMap: Record<string, string> = {
+        sw: 'sw', // Authentic East African Kiswahili neural voice
+        fr: 'fr', // French neural voice
+        pt: 'pt-PT', // African Lusophone (Angola, Mozambique) / European Portuguese (NOT Brazilian)
+        en: 'en', // English voice
+      };
 
-    if (!persistentAudio) {
-      persistentAudio = new Audio();
-    }
+      const ttsLang = ttsLangMap[langCode] || langCode;
+      const query = encodeURIComponent(chunk);
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${ttsLang}&client=tw-ob&q=${query}`;
 
-    const audio = persistentAudio;
-    currentAudioElement = audio;
-    audio.playbackRate = playbackRate;
+      if (!persistentAudio) {
+        persistentAudio = new Audio();
+      }
 
-    audio.onended = () => {
-      if (!fallbackInvoked) {
-        finish();
+      const audio = persistentAudio;
+      currentAudioElement = audio;
+      audio.playbackRate = playbackRate;
+
+      audio.onended = () => {
+        if (!fallbackInvoked) {
+          finish();
+        }
+      };
+
+      audio.onerror = () => {
+        // Audio stream failed (e.g. CORS/network limit) -> trigger fallback ONCE
+        invokeFallbackOnce();
+      };
+
+      audio.src = url;
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          // If aborted because stop() or pause() was called, do NOT execute fallback!
+          if (err?.name === 'AbortError' || queueGeneration !== expectedGen) {
+            finish();
+            return;
+          }
+          invokeFallbackOnce();
+        });
       }
     };
 
-    audio.onerror = () => {
-      // Audio stream failed (e.g. CORS/network limit) -> trigger fallback ONCE
-      invokeFallbackOnce();
-    };
-
-    audio.src = url;
-    const playPromise = audio.play();
-    if (playPromise !== undefined) {
-      playPromise.catch((err) => {
-        // If aborted because stop() or pause() was called, do NOT execute fallback!
-        if (err?.name === 'AbortError' || queueGeneration !== expectedGen) {
-          finish();
-          return;
-        }
-        invokeFallbackOnce();
-      });
+    // For Swahili, if Gemini API key is available, synthesize via Neural Native African TTS first
+    if (langCode === 'sw') {
+      const apiKey = getStoredApiKey();
+      if (apiKey) {
+        playGeminiNeuralAudio(chunk, apiKey, expectedGen).then((success) => {
+          if (success) {
+            finish();
+            return;
+          }
+          startStreamingAudio();
+        });
+        return;
+      }
     }
+
+    startStreamingAudio();
   });
 }
 
@@ -319,7 +461,12 @@ function fallbackSpeechSynthesis(
       en: 'en-ZA',
     };
     utterance.lang = langMap[langCode] || langCode;
-    utterance.rate = rate;
+    // For Swahili speech cadence: keep pace natural, musical, and unhurried (0.92 - 0.94)
+    if (langCode === 'sw') {
+      utterance.rate = Math.min(rate, 0.94);
+    } else {
+      utterance.rate = rate;
+    }
     utterance.pitch = 1.0;
 
     let isDone = false;

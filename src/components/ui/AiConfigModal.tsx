@@ -17,7 +17,7 @@ interface AiConfigModalProps {
  */
 export const AiConfigModal: React.FC<AiConfigModalProps> = ({ isOpen, onClose, onConfigSaved }) => {
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('gemini-3.5-flash');
+  const [model, setModel] = useState('gemini-3.8-flash');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -140,10 +140,9 @@ export const AiConfigModal: React.FC<AiConfigModalProps> = ({ isOpen, onClose, o
               outline: 'none',
             }}
           >
-            <option value="gemini-3.5-flash">Gemini 3.5 Flash (State-of-the-Art Multilingual)</option>
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+            <option value="gemini-3.8-flash">Gemini 3.8 Flash (State-of-the-Art African Multilingual)</option>
+            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Ultra-Low Latency)</option>
             <option value="gemini-flash-latest">Gemini Flash (Latest)</option>
-            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
           </select>
         </div>
 

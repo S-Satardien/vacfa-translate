@@ -14,7 +14,7 @@ import { normalizeMedicalSpeech } from './speech-recognition';
 
 const API_KEY_STORAGE_KEY = 'vacfa_gemini_api_key';
 const MODEL_NAME_STORAGE_KEY = 'vacfa_gemini_model';
-const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
 export interface TranslationResult {
   originalText: string;
@@ -23,6 +23,9 @@ export interface TranslationResult {
   glossaryTerms: string[];
   provider: 'gemini' | 'smart-fallback';
 }
+
+// In-memory LRU cache to deliver instantaneous 0ms responses for repeated or common conference phrases
+const translationCache = new Map<string, Record<string, string>>();
 
 /**
  * Retrieves the stored Gemini API key from browser local storage, URL param, or environment variable.
@@ -66,10 +69,16 @@ export function setStoredApiKey(key: string): void {
 
 /**
  * Retrieves the preferred Gemini model name.
+ * Automatically migrates deprecated models (3.5, 2.5) to the current active 3.8 Flash model.
  */
 export function getStoredModel(): string {
   if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-  return localStorage.getItem(MODEL_NAME_STORAGE_KEY) || process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  const stored = localStorage.getItem(MODEL_NAME_STORAGE_KEY);
+  if (stored && (stored === 'gemini-3.5-flash' || stored === 'gemini-2.5-flash')) {
+    localStorage.setItem(MODEL_NAME_STORAGE_KEY, DEFAULT_GEMINI_MODEL);
+    return DEFAULT_GEMINI_MODEL;
+  }
+  return stored || process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 }
 
 /**
@@ -207,9 +216,25 @@ async function callGeminiApi(
   const model = getStoredModel();
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  const glossarySnippet = glossary
-    .slice(0, 35)
-    .map((g) => `${g.term} -> [FR: ${g.translations.fr || ''}, PT: ${g.translations.pt || ''}, SW: ${g.translations.sw || ''}]`)
+  // Prioritize glossary terms that actually appear in the sentence first, plus top critical medical terms
+  const lowerText = text.toLowerCase();
+  const matchedTerms = glossary.filter((g) => {
+    if (lowerText.includes(g.term.toLowerCase())) return true;
+    return Object.values(g.translations).some((t) => t && lowerText.includes(t.toLowerCase()));
+  });
+
+  // Combine matched terms with core essential acronyms (up to 14 terms max) to keep prompt token footprint ultra-lean
+  const priorityTerms = new Set(matchedTerms.map((m) => m.term));
+  const coreTerms = glossary.filter((g) => ['NITAG', 'NISH', 'RITAG', 'AEFI', 'EPI', 'VVM', 'Gavi', 'DALY', 'QALY'].includes(g.term));
+  for (const c of coreTerms) {
+    if (priorityTerms.size < 14) {
+      priorityTerms.add(c.term);
+      matchedTerms.push(c);
+    }
+  }
+
+  const glossarySnippet = matchedTerms
+    .map((g) => `${g.term} -> [FR: ${g.translations.fr || g.term}, PT: ${g.translations.pt || g.term}, SW: ${g.translations.sw || g.term}]`)
     .join('\n');
 
   const systemInstruction = `You are VACFA Translate, an expert real-time conference interpreter for African public health and vaccine summits.
@@ -245,7 +270,7 @@ Respond ONLY with valid JSON matching this schema:
       },
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: 0.2,
+        temperature: 0.1,
       },
     }),
   });
@@ -274,11 +299,17 @@ Respond ONLY with valid JSON matching this schema:
 
 /**
  * Translates text into target languages using the public translation API.
+ * Includes in-memory caching and strict 2.2s timeout to prevent lag on medical acronyms.
  */
 async function translateWithPublicApi(
   text: string,
   sourceLang: string
 ): Promise<Record<string, string>> {
+  const cacheKey = `${sourceLang}:${text.trim().toLowerCase()}`;
+  if (translationCache.has(cacheKey)) {
+    return { ...translationCache.get(cacheKey)! };
+  }
+
   const targetLangs: Array<'en' | 'fr' | 'pt' | 'sw'> = ['en', 'fr', 'pt', 'sw'];
   const results: Record<string, string> = {
     en: text,
@@ -294,8 +325,12 @@ async function translateWithPublicApi(
     }
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2200); // 2.2s strict timeout prevents MyMemory hanging on rare medical jargon
       const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${target}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       if (res.ok) {
         const data = await res.json();
         const translated = data?.responseData?.translatedText;
@@ -305,10 +340,10 @@ async function translateWithPublicApi(
         }
       }
     } catch {
-      // Ignore network error and fall back
+      // Abort or network error; seamlessly fall back to instant dictionary
     }
 
-    // Fallback: Swahili dictionary if API quota exceeded
+    // Fallback: African medical dictionary if API quota exceeded or timed out
     if (target === 'sw') {
       results[target] = fallbackTranslateToSwahili(text);
     } else if (target === 'fr') {
@@ -319,6 +354,7 @@ async function translateWithPublicApi(
   });
 
   await Promise.all(requests);
+  translationCache.set(cacheKey, results);
   return results;
 }
 

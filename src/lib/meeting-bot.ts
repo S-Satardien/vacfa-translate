@@ -230,10 +230,18 @@ export function createMeetingBotController(
             // Stream to Microsoft Teams CART API if configured
             if (session.meetingIntegration?.teamsCartUrl) {
               const cartLang = session.meetingIntegration.teamsCartLanguage || 'fr';
-              const cartText = finalEntry.translations?.[cartLang] || finalEntry.originalText;
-              sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
-                speaker: `VACFA (${cartLang.toUpperCase()})`,
-              }).catch(() => {});
+              const translated = finalEntry.translations?.[cartLang];
+              const isValid =
+                cartLang === 'en'
+                  ? Boolean(finalEntry.originalText?.trim())
+                  : Boolean(translated && translated !== '...' && translated.trim());
+
+              if (isValid) {
+                const cartText = cartLang === 'en' ? finalEntry.originalText : translated!;
+                sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
+                  speaker: `VACFA (${cartLang.toUpperCase()})`,
+                }).catch(() => {});
+              }
             }
           },
           onAudioLevel: () => {},
@@ -317,10 +325,18 @@ export function createMeetingBotController(
         // Stream to Microsoft Teams CART API if configured
         if (session.meetingIntegration?.teamsCartUrl) {
           const cartLang = session.meetingIntegration.teamsCartLanguage || 'fr';
-          const cartText = finalEntry.translations?.[cartLang] || finalEntry.originalText;
-          sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
-            speaker: `VACFA (${cartLang.toUpperCase()})`,
-          }).catch(() => {});
+          const translated = finalEntry.translations?.[cartLang];
+          const isValid =
+            cartLang === 'en'
+              ? Boolean(finalEntry.originalText?.trim())
+              : Boolean(translated && translated !== '...' && translated.trim());
+
+          if (isValid) {
+            const cartText = cartLang === 'en' ? finalEntry.originalText : translated!;
+            sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
+              speaker: `VACFA (${cartLang.toUpperCase()})`,
+            }).catch(() => {});
+          }
         }
 
         // Pulse audio levels

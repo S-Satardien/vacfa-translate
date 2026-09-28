@@ -9,8 +9,6 @@
  * 5. Web Speech Synthesis Fallback: Offline backup if network connection is interrupted.
  */
 
-import { getStoredApiKey } from './gemini-translator';
-
 interface SpeechSynthesisController {
   speak: (text: string, langCode: string) => void;
   stop: () => void;
@@ -125,68 +123,6 @@ function chunkTextForSpeech(text: string, maxLen = 140): string[] {
   }
 
   return chunks.length > 0 ? chunks : [text];
-}
-
-/**
- * Synthesizes speech via Google Gemini 3.8 Flash Neural TTS for native African pronunciation.
- * Generates direct Base64 audio/wav for East African Kiswahili with 0ms CORS issues.
- */
-async function playGeminiNeuralAudio(
-  chunk: string,
-  apiKey: string,
-  expectedGen: number
-): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
-
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${apiKey}`;
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: chunk }] }],
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (!res.ok) return false;
-    const data = await res.json();
-    const base64Wav = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!base64Wav) return false;
-
-    if (queueGeneration !== expectedGen) return false;
-
-    return new Promise((resolve) => {
-      if (!persistentAudio) {
-        persistentAudio = new Audio();
-      }
-      const audio = persistentAudio;
-      currentAudioElement = audio;
-
-      audio.onended = () => {
-        resolve(true);
-      };
-      audio.onerror = () => {
-        resolve(false);
-      };
-
-      audio.src = `data:audio/wav;base64,${base64Wav}`;
-      const playPromise = audio.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          if (err?.name === 'AbortError' || queueGeneration !== expectedGen) {
-            resolve(true);
-            return;
-          }
-          resolve(false);
-        });
-      }
-    });
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -405,21 +341,7 @@ function playAudioChunk(
       }
     };
 
-    // For Swahili, if Gemini API key is available, synthesize via Neural Native African TTS first
-    if (langCode === 'sw') {
-      const apiKey = getStoredApiKey();
-      if (apiKey) {
-        playGeminiNeuralAudio(chunk, apiKey, expectedGen).then((success) => {
-          if (success) {
-            finish();
-            return;
-          }
-          startStreamingAudio();
-        });
-        return;
-      }
-    }
-
+    // Stream authentic neural audio directly for Swahili, French, Portuguese, and English
     startStreamingAudio();
   });
 }

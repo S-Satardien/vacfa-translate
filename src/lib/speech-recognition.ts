@@ -142,6 +142,9 @@ export function createSpeechRecognitionController(
   /**
    * Builds the SpeechRecognition instance with event listeners.
    */
+  let lastFinalTranscript = '';
+  let lastFinalTimestamp = 0;
+
   function setupRecognition(): void {
     if (!SpeechRecognitionConstructor) return;
 
@@ -157,7 +160,17 @@ export function createSpeechRecognitionController(
         const item = event.results[i];
         const text = normalizeMedicalSpeech(item[0].transcript);
         if (item.isFinal) {
-          callbacks.onFinalResult?.(text.trim());
+          const finalClean = text.trim();
+          const now = Date.now();
+          // Filter out duplicate final callbacks triggered by browser speech engines within 2.8s
+          if (
+            finalClean &&
+            !(finalClean.toLowerCase() === lastFinalTranscript.toLowerCase() && now - lastFinalTimestamp < 2800)
+          ) {
+            lastFinalTranscript = finalClean;
+            lastFinalTimestamp = now;
+            callbacks.onFinalResult?.(finalClean);
+          }
         } else {
           interim += text;
         }

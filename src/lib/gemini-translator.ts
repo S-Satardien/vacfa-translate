@@ -14,7 +14,7 @@ import { normalizeMedicalSpeech } from './speech-recognition';
 
 const API_KEY_STORAGE_KEY = 'vacfa_gemini_api_key';
 const MODEL_NAME_STORAGE_KEY = 'vacfa_gemini_model';
-const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
 
 export interface TranslationResult {
   originalText: string;
@@ -74,7 +74,7 @@ export function setStoredApiKey(key: string): void {
 export function getStoredModel(): string {
   if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
   const stored = localStorage.getItem(MODEL_NAME_STORAGE_KEY);
-  if (stored && (stored === 'gemini-3.5-flash' || stored === 'gemini-2.5-flash')) {
+  if (stored && (stored.includes('3.8') || stored.includes('3.5') || stored.includes('2.5') || stored.includes('tts'))) {
     localStorage.setItem(MODEL_NAME_STORAGE_KEY, DEFAULT_GEMINI_MODEL);
     return DEFAULT_GEMINI_MODEL;
   }
@@ -326,15 +326,19 @@ async function translateWithPublicApi(
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2200); // 2.2s strict timeout prevents MyMemory hanging on rare medical jargon
-      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${target}`;
+      const timeoutId = setTimeout(() => controller.abort(), 4500); // 4.5s allows reliable public internet roundtrip
+      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${target}&de=vacfa@uct.ac.za`;
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
         const translated = data?.responseData?.translatedText;
-        if (translated && !translated.toUpperCase().includes('MYMEMORY WARNING') && !translated.toUpperCase().includes('IS AN INVALID')) {
+        if (
+          translated &&
+          !translated.toUpperCase().includes('MYMEMORY WARNING') &&
+          !translated.toUpperCase().includes('IS AN INVALID')
+        ) {
           results[target] = translated;
           return;
         }
@@ -343,7 +347,7 @@ async function translateWithPublicApi(
       // Abort or network error; seamlessly fall back to instant dictionary
     }
 
-    // Fallback: African medical dictionary if API quota exceeded or timed out
+    // Fallback: African conference & medical dictionary if API quota exceeded or timed out
     if (target === 'sw') {
       results[target] = fallbackTranslateToSwahili(text);
     } else if (target === 'fr') {
@@ -396,35 +400,53 @@ function escapeRegExp(string: string): string {
  */
 function fallbackTranslateToSwahili(text: string): string {
   const dictionary: Record<string, string> = {
+    'can everyone hear me': 'kila mtu ananisikia',
+    'can you hear me': 'unanisikia',
+    'i can hear you': 'nakusikia',
+    'loud and clear': 'kwa sauti na wazi',
+    'testing audio': 'majaribio ya sauti',
     'good morning': 'habari za asubuhi',
     'good afternoon': 'habari za mchana',
-    'welcome': 'karibu',
+    'good evening': 'habari za jioni',
     'welcome everyone': 'karibuni wote',
-    'thank you': 'asante',
+    'welcome': 'karibu',
     'thank you very much': 'asante sana',
+    'thank you': 'asante',
     'today': 'leo',
     'we will discuss': 'tutajadili',
+    'next slide': 'slaidi inayofuata',
+    'slide': 'slaidi',
+    'presentation': 'uwasilishaji',
+    'meeting': 'mkutano',
+    'conference': 'mkutano mkuu',
+    'important': 'muhimu',
+    'question': 'swali',
+    'questions': 'maswali',
+    'answer': 'jibu',
     'vaccine': 'chanjo',
     'vaccines': 'chanjo',
+    'vaccination': 'utoaji wa chanjo',
     'cold chain': 'mfumo wa baridi',
-    'immunization': 'kinga',
+    'immunization': 'kinga ya maradhi',
     'health': 'afya',
     'public health': 'afya ya umma',
     'hospital': 'hospitali',
     'doctor': 'daktari',
+    'nurse': 'muuguzi',
     'clinical trial': 'jaribio la kimatibabu',
     'dose': 'dozi',
     'booster dose': 'dozi ya nyongeza',
     'surveillance': 'ufuatiliaji',
+    'outbreak': 'mlipuko wa ugonjwa',
     'my name is': 'jina langu ni',
-    'conference': 'mkutano',
     'the captions': 'maelezo mafupi',
     'talking': 'kuzungumza',
+    'africa': 'Afrika',
   };
 
   let translated = text;
   for (const [en, sw] of Object.entries(dictionary)) {
-    const reg = new RegExp(`\\b${en}\\b`, 'gi');
+    const reg = new RegExp(`\\b${escapeRegExp(en)}\\b`, 'gi');
     translated = translated.replace(reg, sw);
   }
   return translated;
@@ -435,25 +457,53 @@ function fallbackTranslateToSwahili(text: string): string {
  */
 function fallbackTranslateToFrench(text: string): string {
   const dictionary: Record<string, string> = {
+    'can everyone hear me': 'est-ce que tout le monde m\'entend',
+    'can you hear me': 'm\'entendez-vous',
+    'i can hear you': 'je vous entends',
+    'loud and clear': 'fort et clair',
+    'testing audio': 'test audio',
     'good morning': 'bonjour',
+    'good afternoon': 'bon après-midi',
+    'good evening': 'bonsoir',
+    'welcome everyone': 'bienvenue à tous',
     'welcome': 'bienvenue',
+    'thank you very much': 'merci beaucoup',
     'thank you': 'merci',
     'today': 'aujourd\'hui',
+    'we will discuss': 'nous allons discuter de',
+    'next slide': 'diapositive suivante',
+    'slide': 'diapositive',
+    'presentation': 'présentation',
+    'meeting': 'réunion',
+    'conference': 'conférence',
+    'important': 'important',
+    'question': 'question',
+    'questions': 'questions',
+    'answer': 'réponse',
     'vaccine': 'vaccin',
     'vaccines': 'vaccins',
+    'vaccination': 'vaccination',
     'cold chain': 'chaîne du froid',
     'immunization': 'immunisation',
     'health': 'santé',
     'public health': 'santé publique',
+    'hospital': 'hôpital',
+    'doctor': 'docteur',
+    'nurse': 'infirmière',
     'clinical trial': 'essai clinique',
     'dose': 'dose',
+    'booster dose': 'dose de rappel',
+    'surveillance': 'surveillance épidémiologique',
+    'outbreak': 'épidémie',
     'my name is': 'je m\'appelle',
-    'conference': 'conférence',
+    'the captions': 'les sous-titres',
+    'talking': 'en train de parler',
+    'africa': 'Afrique',
   };
 
   let translated = text;
   for (const [en, fr] of Object.entries(dictionary)) {
-    const reg = new RegExp(`\\b${en}\\b`, 'gi');
+    const reg = new RegExp(`\\b${escapeRegExp(en)}\\b`, 'gi');
     translated = translated.replace(reg, fr);
   }
   return translated;
@@ -464,25 +514,53 @@ function fallbackTranslateToFrench(text: string): string {
  */
 function fallbackTranslateToPortuguese(text: string): string {
   const dictionary: Record<string, string> = {
+    'can everyone hear me': 'todos conseguem me ouvir',
+    'can you hear me': 'você consegue me ouvir',
+    'i can hear you': 'consigo te ouvir',
+    'loud and clear': 'alto e em bom som',
+    'testing audio': 'teste de áudio',
     'good morning': 'bom dia',
+    'good afternoon': 'boa tarde',
+    'good evening': 'boa noite',
+    'welcome everyone': 'bem-vindos a todos',
     'welcome': 'bem-vindo',
+    'thank you very much': 'muito obrigado',
     'thank you': 'obrigado',
     'today': 'hoje',
+    'we will discuss': 'vamos discutir',
+    'next slide': 'próximo slide',
+    'slide': 'slide',
+    'presentation': 'apresentação',
+    'meeting': 'reunião',
+    'conference': 'conferência',
+    'important': 'importante',
+    'question': 'pergunta',
+    'questions': 'perguntas',
+    'answer': 'resposta',
     'vaccine': 'vacina',
     'vaccines': 'vacinas',
+    'vaccination': 'vacinação',
     'cold chain': 'cadeia de frio',
     'immunization': 'imunização',
     'health': 'saúde',
     'public health': 'saúde pública',
+    'hospital': 'hospital',
+    'doctor': 'médico',
+    'nurse': 'enfermeiro',
     'clinical trial': 'ensaio clínico',
     'dose': 'dose',
+    'booster dose': 'dose de reforço',
+    'surveillance': 'vigilância epidemiológica',
+    'outbreak': 'surto epidêmico',
     'my name is': 'meu nome é',
-    'conference': 'conferência',
+    'the captions': 'as legendas',
+    'talking': 'falando',
+    'africa': 'África',
   };
 
   let translated = text;
   for (const [en, pt] of Object.entries(dictionary)) {
-    const reg = new RegExp(`\\b${en}\\b`, 'gi');
+    const reg = new RegExp(`\\b${escapeRegExp(en)}\\b`, 'gi');
     translated = translated.replace(reg, pt);
   }
   return translated;

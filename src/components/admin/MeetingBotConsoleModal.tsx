@@ -8,11 +8,12 @@ import { Badge } from '@/components/ui/Badge';
 import { 
   Bot, Video, Mic, MicOff, Radio, Play, Square, 
   ExternalLink, Copy, Check, Volume2, VolumeX, AlertCircle,
-  Subtitles, Download, Layers, Settings2, Send, Info
+  Subtitles, Download, Layers, Settings2, Send, Info, Headphones
 } from 'lucide-react';
 import type { Session, MeetingBotStatus, InterpretationChannelStatus } from '@/lib/types';
 import { createMeetingBotController, MeetingBotController } from '@/lib/meeting-bot';
-import { createSpeechSynthesisController } from '@/lib/speech-synthesis';
+import { createSpeechSynthesisController, unlockAudioPlayback } from '@/lib/speech-synthesis';
+import { subscribeToLiveSync } from '@/lib/live-sync';
 import { updateSession } from '@/lib/session-store';
 import { testTeamsCartConnection } from '@/lib/teams-cart';
 import { downloadTeamsAppPackage } from '@/lib/teams-package';
@@ -205,11 +206,45 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const [copiedFrLink, setCopiedFrLink] = useState(false);
+
+  // Subscribe to live synchronized captions to play spoken audio when an admin monitors a channel
+  useEffect(() => {
+    if (!monitoringLang || !isOpen) return;
+
+    const unsubscribe = subscribeToLiveSync({
+      onCaptionFinal: (caption) => {
+        if (!ttsRef.current) return;
+        const translated = caption.translations?.[monitoringLang] || caption.originalText;
+        if (translated && translated !== '...' && translated.trim()) {
+          ttsRef.current.speak(translated, monitoringLang);
+        }
+      },
+    });
+
+    return () => unsubscribe();
+  }, [monitoringLang, isOpen]);
+
+  const getLanguageListenerUrl = (lang = 'fr') => {
+    if (typeof window === 'undefined') return '';
+    const base = `${window.location.origin}${process.env.NODE_ENV === 'production' ? '/vacfa-translate' : ''}`;
+    return `${base}/live/${session?.id || ''}?lang=${lang}`;
+  };
+
+  const handleCopyFrLink = () => {
+    const url = getLanguageListenerUrl('fr');
+    if (!url) return;
+    navigator.clipboard.writeText(url);
+    setCopiedFrLink(true);
+    setTimeout(() => setCopiedFrLink(false), 2000);
+  };
+
   const handleMonitorChannel = (langCode: string) => {
     if (monitoringLang === langCode) {
       setMonitoringLang(null);
       ttsRef.current?.stop();
     } else {
+      unlockAudioPlayback();
       ttsRef.current?.stop();
       setMonitoringLang(langCode);
       const testPhrases: Record<string, string> = {
@@ -331,25 +366,58 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
         {/* Tab 1: Simultaneous Audio Channels */}
         {activeTab === 'channels' && (
           <>
-            {/* Audio Bridge & Teams Ingestion Notice */}
+            {/* Audio Bridge & Interpretation Quick-Access Box */}
             <div
               style={{
                 background: 'rgba(84, 91, 199, 0.12)',
                 border: '1px solid rgba(84, 91, 199, 0.28)',
                 borderRadius: '12px',
-                padding: '12px 14px',
+                padding: '14px 16px',
                 fontSize: '0.85rem',
                 color: 'var(--cream)',
                 lineHeight: 1.5,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
               }}
             >
-              <div style={{ color: '#8E96F7', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                <Info size={16} /> How to Bridge Microsoft Teams Live Audio & Subtitles:
+              <div style={{ color: '#8E96F7', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Headphones size={16} /> How to Listen in French / Other Languages vs Captions:
               </div>
-              <div>
-                1. Once you click <strong>Invite Bot</strong> below, click <strong>Capture Teams/Zoom Tab Audio</strong>.<br />
-                2. Select your active Microsoft Teams meeting tab and ensure the <strong>"Share audio"</strong> checkbox is ticked.<br />
-                3. As anyone in Teams speaks, VACFA transcribes and translates the speech in real-time, streaming translated subtitles straight into your Teams meeting window via your configured <strong>CART Captions Link</strong>!
+              <div style={{ color: 'var(--cream)' }}>
+                <strong>Important Distinction:</strong> Teams CART (Tab 2) provides <em>text subtitles</em> on screen. To <strong>hear spoken translations</strong> through headphones or speakers:
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<ExternalLink size={13} />}
+                  onClick={() => {
+                    const url = getLanguageListenerUrl('fr');
+                    if (url) window.open(url, '_blank');
+                  }}
+                >
+                  Open French Audio Listener (New Tab)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={copiedFrLink ? <Check size={13} color="var(--success)" /> : <Copy size={13} />}
+                  onClick={handleCopyFrLink}
+                >
+                  {copiedFrLink ? 'French Link Copied' : 'Copy French Listener Link'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Layers size={13} />}
+                  onClick={() => setActiveTab('teams_app')}
+                >
+                  Teams In-Meeting App (.zip)
+                </Button>
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--grey-400)' }}>
+                Or click <strong>Listen In</strong> on any channel below to monitor audio directly in this console.
               </div>
             </div>
 
@@ -569,6 +637,46 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
         {/* Tab 2: In-Teams Native Subtitles (CART API) */}
         {activeTab === 'cart' && (
           <div className={styles.cartSection}>
+            {/* Audio Interpretation vs Captions Clarity Note */}
+            <div
+              style={{
+                background: 'rgba(255, 152, 0, 0.1)',
+                border: '1px solid rgba(255, 152, 0, 0.3)',
+                borderRadius: '12px',
+                padding: '12px 14px',
+                fontSize: '0.85rem',
+                color: 'var(--cream)',
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ color: '#FFB74D', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                <Headphones size={15} /> Text Subtitles Banner — How to Listen to Voice Audio:
+              </div>
+              <div>
+                Microsoft Teams CART is strictly a <strong>text-captioning protocol</strong> (subtitles banner). It does not carry voice audio.
+                To <strong>listen to synthesized French or African speech</strong>, open the listener player:{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = getLanguageListenerUrl(cartLanguage);
+                    if (url) window.open(url, '_blank');
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#8E96F7',
+                    textDecoration: 'underline',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    padding: 0,
+                  }}
+                >
+                  Open Live Audio Player ({cartLanguage.toUpperCase()})
+                </button>
+                {' '}or install the <strong>Teams In-Meeting App</strong> from the next tab.
+              </div>
+            </div>
+
             <div className={styles.cartCard}>
               <div className={styles.cartHeader}>
                 <h4 className={styles.cartTitle}>

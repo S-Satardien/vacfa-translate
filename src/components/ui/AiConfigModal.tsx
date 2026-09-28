@@ -17,7 +17,7 @@ interface AiConfigModalProps {
  */
 export const AiConfigModal: React.FC<AiConfigModalProps> = ({ isOpen, onClose, onConfigSaved }) => {
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('gemini-3.8-flash');
+  const [model, setModel] = useState('gemini-2.0-flash');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -138,11 +138,10 @@ export const AiConfigModal: React.FC<AiConfigModalProps> = ({ isOpen, onClose, o
               color: 'var(--cream)',
               fontSize: '0.9rem',
               outline: 'none',
-            }}
-          >
-            <option value="gemini-3.8-flash">Gemini 3.8 Flash (State-of-the-Art African Multilingual)</option>
-            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Ultra-Low Latency)</option>
-            <option value="gemini-flash-latest">Gemini Flash (Latest)</option>
+            }}>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash (Next-Gen Multilingual, 0.3s Latency)</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Fast & Cost-Efficient)</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro (Highest Accuracy for Complex Medical Text)</option>
           </select>
         </div>
 

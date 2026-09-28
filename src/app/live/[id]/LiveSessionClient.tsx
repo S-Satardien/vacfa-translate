@@ -184,10 +184,18 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         // Stream to Microsoft Teams CART API if configured
         if (currentSession.meetingIntegration?.teamsCartUrl) {
           const cartLang = currentSession.meetingIntegration.teamsCartLanguage || 'fr';
-          const cartText = updatedEntry.translations?.[cartLang] || updatedEntry.originalText;
-          sendTeamsCartCaption(currentSession.meetingIntegration.teamsCartUrl, cartText, {
-            speaker: `VACFA (${cartLang.toUpperCase()})`,
-          }).catch(() => {});
+          const translated = updatedEntry.translations?.[cartLang];
+          const isValid =
+            cartLang === 'en'
+              ? Boolean(updatedEntry.originalText?.trim())
+              : Boolean(translated && translated !== '...' && translated.trim());
+
+          if (isValid) {
+            const cartText = cartLang === 'en' ? updatedEntry.originalText : translated!;
+            sendTeamsCartCaption(currentSession.meetingIntegration.teamsCartUrl, cartText, {
+              speaker: `VACFA (${cartLang.toUpperCase()})`,
+            }).catch(() => {});
+          }
         }
       } catch (err: any) {
         setMicErrorMessage('Translation error: ' + (err?.message || 'Unknown error'));

@@ -45,6 +45,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
   const [errorMessage, setErrorMessage] = useState('');
   const [monitoringLang, setMonitoringLang] = useState<string | null>(null);
   const [floorLanguage, setFloorLanguage] = useState<'auto' | 'en' | 'fr' | 'pt' | 'sw'>('auto');
+  const [showMultiSpeakerGuide, setShowMultiSpeakerGuide] = useState(false);
 
   // In-Meeting Tabs and Teams CART Integration State
   const [activeTab, setActiveTab] = useState<'channels' | 'cart' | 'teams_app'>('channels');
@@ -481,6 +482,93 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
                   );
                 })}
               </div>
+            </div>
+
+            {/* Multi-Speaker Audio Setup & Routing Card */}
+            <div
+              style={{
+                background: 'rgba(26, 26, 26, 0.75)',
+                border: '1px solid rgba(84, 91, 199, 0.3)',
+                borderRadius: '12px',
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setShowMultiSpeakerGuide(!showMultiSpeakerGuide)}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Volume2 size={16} color="#8E96F7" />
+                  <div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--white)' }}>
+                      Capturing Remote Teams Speakers (Audio Routing)
+                    </span>
+                    <span style={{ display: 'block', fontSize: '0.73rem', color: 'var(--grey-400)' }}>
+                      Why does Chrome only hear your mic by default, and how to enable full meeting capture in 30 seconds
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  style={{
+                    background: 'rgba(84, 91, 199, 0.15)',
+                    border: '1px solid rgba(84, 91, 199, 0.3)',
+                    borderRadius: '6px',
+                    color: '#8E96F7',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    padding: '3px 9px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {showMultiSpeakerGuide ? 'Hide Guide' : 'Setup Guide'}
+                </button>
+              </div>
+
+              {showMultiSpeakerGuide && (
+                <div
+                  style={{
+                    fontSize: '0.8rem',
+                    color: 'var(--cream)',
+                    lineHeight: 1.5,
+                    borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                    paddingTop: '10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                  }}
+                >
+                  <div style={{ background: 'rgba(232, 72, 94, 0.1)', border: '1px solid rgba(232, 72, 94, 0.25)', borderRadius: '8px', padding: '8px 10px', color: 'var(--cream)' }}>
+                    <strong style={{ color: 'var(--vacfa-red-light)' }}>Technical Reason:</strong> Browser security (Web Speech API) strictly listens to your PC&apos;s <em>recording input device</em> (the room mic). Sound coming out of your speakers (other Teams attendees) does not enter the mic unless routed in Windows.
+                  </div>
+
+                  <div style={{ fontWeight: 600, color: 'var(--white)', marginTop: '4px' }}>
+                    Option 1: Enable Windows &quot;Stereo Mix&quot; (30 seconds, Free, Built into Windows)
+                  </div>
+                  <ol style={{ margin: 0, paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <li>Press <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '1px 5px', borderRadius: '4px' }}>Win + R</kbd>, type <code style={{ color: '#8E96F7' }}>mmsys.cpl</code> and hit <strong>Enter</strong>.</li>
+                    <li>Switch to the <strong>Recording</strong> tab. Right-click blank space &rarr; check <strong>Show Disabled Devices</strong>.</li>
+                    <li>Right-click <strong>Stereo Mix</strong> &rarr; click <strong>Enable</strong> &rarr; click <strong>Set as Default Device</strong>.</li>
+                    <li>In Chrome, click the site settings padlock next to the URL &rarr; set <strong>Microphone</strong> to <strong>Stereo Mix</strong>.</li>
+                    <li>Every remote attendee talking in Microsoft Teams will now be transcribed and translated instantly!</li>
+                  </ol>
+
+                  <div style={{ fontWeight: 600, color: 'var(--white)', marginTop: '4px' }}>
+                    Option 2: Use Virtual Audio Cable (Recommended when wearing headphones)
+                  </div>
+                  <div style={{ color: 'var(--grey-400)', fontSize: '0.78rem' }}>
+                    Install free <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--vacfa-red-light)', textDecoration: 'underline' }}>VB-Audio Virtual Cable</a>. In Teams Settings &rarr; Devices, set <strong>Speaker</strong> to <em>CABLE Input</em>. In Chrome settings, set <strong>Microphone</strong> to <em>CABLE Output</em>.
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bot Status & Lifecycle Card */}

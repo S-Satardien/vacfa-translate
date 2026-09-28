@@ -14,7 +14,7 @@ import { normalizeMedicalSpeech } from './speech-recognition';
 
 const API_KEY_STORAGE_KEY = 'vacfa_gemini_api_key';
 const MODEL_NAME_STORAGE_KEY = 'vacfa_gemini_model';
-const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
 export interface TranslationResult {
   originalText: string;
@@ -74,7 +74,7 @@ export function setStoredApiKey(key: string): void {
 export function getStoredModel(): string {
   if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
   const stored = localStorage.getItem(MODEL_NAME_STORAGE_KEY);
-  if (stored && (stored.includes('3.8') || stored.includes('3.5') || stored.includes('2.5') || stored.includes('tts'))) {
+  if (stored && (stored.includes('2.0') || stored.includes('1.5') || stored.includes('tts') || stored.includes('2.5') || stored.includes('3.5'))) {
     localStorage.setItem(MODEL_NAME_STORAGE_KEY, DEFAULT_GEMINI_MODEL);
     return DEFAULT_GEMINI_MODEL;
   }

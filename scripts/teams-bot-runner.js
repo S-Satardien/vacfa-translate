@@ -844,14 +844,13 @@ async function main() {
 
             return;
           }
+        } catch (err) {
+          // Retrying connection
         }
-      } catch (err) {
-        // Retrying connection
       }
-    }
 
-    console.log('[VACFA Bot] Browser running. Teams window open on screen.');
-  }
+      console.log('[VACFA Bot] Browser running. Teams window open on screen.');
+    }
 
   attachCDP();
 

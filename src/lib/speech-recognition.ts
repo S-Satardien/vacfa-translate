@@ -144,9 +144,75 @@ export function createSpeechRecognitionController(
    */
   let lastFinalTranscript = '';
   let lastFinalTimestamp = 0;
+  let sentenceBuffer = '';
+  let sentenceFlushTimer: any = null;
+
+  function flushSentence(): void {
+    if (sentenceFlushTimer) {
+      clearTimeout(sentenceFlushTimer);
+      sentenceFlushTimer = null;
+    }
+    const clean = sentenceBuffer.trim();
+    sentenceBuffer = '';
+    if (!clean) return;
+
+    // Ensure proper terminal punctuation (. ! ?)
+    let withPunctuation = clean;
+    if (!/[.!?]$/.test(withPunctuation)) {
+      withPunctuation += '.';
+    }
+
+    const now = Date.now();
+    // Filter out identical transcripts within 2.5s window
+    if (
+      !(withPunctuation.toLowerCase() === lastFinalTranscript.toLowerCase() && now - lastFinalTimestamp < 2500)
+    ) {
+      lastFinalTranscript = withPunctuation;
+      lastFinalTimestamp = now;
+      callbacks.onFinalResult?.(withPunctuation);
+    }
+  }
+
+  function handleFinalFragment(rawChunk: string): void {
+    const chunk = rawChunk.trim();
+    if (!chunk) return;
+
+    if (sentenceFlushTimer) {
+      clearTimeout(sentenceFlushTimer);
+      sentenceFlushTimer = null;
+    }
+
+    // Capitalize first character of new sentence
+    if (!sentenceBuffer) {
+      sentenceBuffer = chunk.charAt(0).toUpperCase() + chunk.slice(1);
+    } else {
+      // Concatenate subsequent phrases
+      sentenceBuffer += ' ' + chunk;
+    }
+
+    // Check if the current sentence concludes with terminal punctuation
+    const endsWithTerminal = /[.!?]$/.test(sentenceBuffer.trim());
+
+    // Check if sentence ends with continuation words (conjunctions, prepositions)
+    const endsWithContinuation = /\b(and|or|but|because|that|which|with|in|to|for|as|the|a|an|if|when|so|while|although|however|since|then|also|where)$/i.test(sentenceBuffer.trim());
+
+    // If clearly terminated, flush after short 400ms pause. Otherwise wait 1300ms for speaker breath/pause.
+    const pauseDelay = endsWithTerminal && !endsWithContinuation ? 400 : 1300;
+
+    sentenceFlushTimer = setTimeout(() => {
+      flushSentence();
+    }, pauseDelay);
+  }
 
   function setupRecognition(): void {
     if (!SpeechRecognitionConstructor) return;
+
+    if (recognition) {
+      try {
+        recognition.abort();
+      } catch {}
+      recognition = null;
+    }
 
     recognition = new SpeechRecognitionConstructor();
     recognition.continuous = true;
@@ -160,23 +226,14 @@ export function createSpeechRecognitionController(
         const item = event.results[i];
         const text = normalizeMedicalSpeech(item[0].transcript);
         if (item.isFinal) {
-          const finalClean = text.trim();
-          const now = Date.now();
-          // Filter out duplicate final callbacks triggered by browser speech engines within 2.8s
-          if (
-            finalClean &&
-            !(finalClean.toLowerCase() === lastFinalTranscript.toLowerCase() && now - lastFinalTimestamp < 2800)
-          ) {
-            lastFinalTranscript = finalClean;
-            lastFinalTimestamp = now;
-            callbacks.onFinalResult?.(finalClean);
-          }
+          handleFinalFragment(text);
         } else {
           interim += text;
         }
       }
       if (interim) {
-        callbacks.onInterimResult?.(interim);
+        const displayInterim = sentenceBuffer ? `${sentenceBuffer} ${interim}` : interim;
+        callbacks.onInterimResult?.(displayInterim);
       }
     };
 
@@ -189,16 +246,35 @@ export function createSpeechRecognitionController(
     };
 
     recognition.onend = () => {
-      // Auto-restart if user did not explicitly stop (handles browser timeouts)
+      // Flush any pending buffered speech
+      if (sentenceBuffer.trim()) {
+        flushSentence();
+      }
+
+      // Safe asynchronous restart with backoff to prevent browser InvalidStateError
       if (isListeningState) {
-        try {
-          recognition.start();
-        } catch {
-          // Restart failed, update state
-          isListeningState = false;
-          cleanupAudioAnalyser();
-          callbacks.onStateChange?.(false);
-        }
+        setTimeout(() => {
+          if (!isListeningState) return;
+          try {
+            setupRecognition();
+            recognition.start();
+          } catch {
+            // Secondary retry in 500ms if browser speech subsystem is still spinning down
+            setTimeout(() => {
+              if (isListeningState) {
+                try {
+                  setupRecognition();
+                  recognition.start();
+                } catch {
+                  // Fallback: update state if restart repeatedly fails
+                  isListeningState = false;
+                  cleanupAudioAnalyser();
+                  callbacks.onStateChange?.(false);
+                }
+              }
+            }, 500);
+          }
+        }, 200);
       } else {
         cleanupAudioAnalyser();
         callbacks.onStateChange?.(false);
@@ -231,6 +307,13 @@ export function createSpeechRecognitionController(
 
     stop(): void {
       isListeningState = false;
+      if (sentenceFlushTimer) {
+        clearTimeout(sentenceFlushTimer);
+        sentenceFlushTimer = null;
+      }
+      if (sentenceBuffer.trim()) {
+        flushSentence();
+      }
       cleanupAudioAnalyser();
       if (recognition) {
         try {

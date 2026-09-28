@@ -275,17 +275,22 @@ async function callGeminiApi(
   glossary: GlossaryTerm[],
   apiKey: string
 ): Promise<{ translations: Record<string, string>; glossaryTerms: string[]; detectedLanguage?: 'en' | 'fr' | 'pt' | 'sw' }> {
-  const model = getStoredModel();
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const preferredModel = getStoredModel();
+  const candidateModels = [
+    preferredModel,
+    'gemini-flash-latest',
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-pro-latest',
+  ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
-  // Prioritize glossary terms that actually appear in the sentence first, plus top critical medical terms
   const lowerText = text.toLowerCase();
   const matchedTerms = glossary.filter((g) => {
     if (lowerText.includes(g.term.toLowerCase())) return true;
     return Object.values(g.translations).some((t) => t && lowerText.includes(t.toLowerCase()));
   });
 
-  // Combine matched terms with core essential acronyms (up to 14 terms max) to keep prompt token footprint ultra-lean
   const priorityTerms = new Set(matchedTerms.map((m) => m.term));
   const coreTerms = glossary.filter((g) => ['NITAG', 'NISH', 'RITAG', 'AEFI', 'EPI', 'VVM', 'Gavi', 'DALY', 'QALY'].includes(g.term));
   for (const c of coreTerms) {
@@ -319,39 +324,57 @@ Respond ONLY with valid JSON matching this schema:
   "detectedGlossaryTerms": ["exact term name that appeared in text"]
 }`;
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: `Input speech from conference: "${text}" (Floor hint: ${sourceLang})` }],
+  let lastError: Error | null = null;
+  let parsed: any = null;
+
+  for (const model of candidateModels) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      ],
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
-      },
-    }),
-  });
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: `Input speech from conference: "${text}" (Floor hint: ${sourceLang})` }],
+            },
+          ],
+          systemInstruction: {
+            parts: [{ text: systemInstruction }],
+          },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+          },
+        }),
+      });
 
-  if (!response.ok) {
-    throw new Error(`Gemini API error: ${response.status}`);
+      if (!response.ok) {
+        lastError = new Error(`Gemini ${model} error: ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) {
+        lastError = new Error(`Empty response from Gemini ${model}`);
+        continue;
+      }
+
+      parsed = JSON.parse(rawText);
+      break;
+    } catch (err: any) {
+      lastError = err;
+    }
   }
 
-  const data = await response.json();
-  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) {
-    throw new Error('Empty response from Gemini');
+  if (!parsed) {
+    throw lastError || new Error('All Gemini model candidates exhausted');
   }
-
-  const parsed = JSON.parse(rawText);
   const detected = (parsed.detectedLanguage as 'en' | 'fr' | 'pt' | 'sw') || (sourceLang as 'en' | 'fr' | 'pt' | 'sw');
 
   return {

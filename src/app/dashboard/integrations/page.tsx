@@ -6,11 +6,13 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { 
   Bot, Video, Radio, Activity, Zap, 
-  ExternalLink, Play, CheckCircle2, ShieldCheck, Headphones 
+  ExternalLink, Play, CheckCircle2, ShieldCheck, Headphones,
+  Download, Layers
 } from 'lucide-react';
 import { getAllSessions, createSession } from '@/lib/session-store';
 import type { Session, MeetingPlatform } from '@/lib/types';
 import { MeetingBotConsoleModal } from '@/components/admin/MeetingBotConsoleModal';
+import { downloadTeamsAppPackage } from '@/lib/teams-package';
 import styles from './page.module.css';
 
 /**
@@ -27,6 +29,18 @@ export default function IntegrationsPage() {
   const [quickPlatform, setQuickPlatform] = useState<MeetingPlatform>('teams');
   const [quickUrl, setQuickUrl] = useState('');
   const [quickName, setQuickName] = useState('');
+  const [isDownloadingTeams, setIsDownloadingTeams] = useState(false);
+
+  const handleDownloadTeams = async () => {
+    setIsDownloadingTeams(true);
+    try {
+      await downloadTeamsAppPackage();
+    } catch {
+      // Handled silently
+    } finally {
+      setIsDownloadingTeams(false);
+    }
+  };
 
   const loadSessions = () => {
     setSessions(getAllSessions());
@@ -73,13 +87,23 @@ export default function IntegrationsPage() {
 
   return (
     <div className={styles.container}>
-      <header className={styles.header}>
+      <header className={styles.header} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h1 className={styles.title}>AI Meeting Bots & Integrations</h1>
           <p style={{ margin: '4px 0 0 0', color: 'var(--grey-400)', fontSize: '0.95rem' }}>
             Dispatch virtual interpreter bots to Microsoft Teams and Zoom calls with simultaneous audio routing.
           </p>
         </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          icon={<Download size={15} />}
+          onClick={handleDownloadTeams}
+          disabled={isDownloadingTeams}
+        >
+          {isDownloadingTeams ? 'Packaging...' : 'Download Teams App (.zip)'}
+        </Button>
       </header>
 
       {/* Global Telemetry Metrics */}
@@ -280,6 +304,13 @@ export default function IntegrationsPage() {
           <h3 className={styles.archTitle}><ShieldCheck size={18} color="var(--success)" /> Delegate Channel Distribution</h3>
           <p className={styles.archText}>
             Simultaneous interpretation is routed into dedicated French, Portuguese (Lusophone), and Swahili neural audio channels accessible on phones and browsers.
+          </p>
+        </div>
+
+        <div className={styles.archCard}>
+          <h3 className={styles.archTitle}><Layers size={18} color="#8E96F7" /> In-Meeting Teams Integration</h3>
+          <p className={styles.archText}>
+            Enables native Teams side panel (<code>meetingSidePanel</code>) and live closed captions via Teams CART API, so attendees never leave Teams.
           </p>
         </div>
       </section>

@@ -7,11 +7,15 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { 
   Bot, Video, Mic, MicOff, Radio, Play, Square, 
-  ExternalLink, Copy, Check, Volume2, VolumeX, AlertCircle 
+  ExternalLink, Copy, Check, Volume2, VolumeX, AlertCircle,
+  Subtitles, Download, Layers, Settings2, Send, Info
 } from 'lucide-react';
 import type { Session, MeetingBotStatus, InterpretationChannelStatus } from '@/lib/types';
 import { createMeetingBotController, MeetingBotController } from '@/lib/meeting-bot';
 import { createSpeechSynthesisController } from '@/lib/speech-synthesis';
+import { updateSession } from '@/lib/session-store';
+import { testTeamsCartConnection } from '@/lib/teams-cart';
+import { downloadTeamsAppPackage } from '@/lib/teams-package';
 import styles from './MeetingBotConsoleModal.module.css';
 
 interface MeetingBotConsoleModalProps {
@@ -39,6 +43,67 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [monitoringLang, setMonitoringLang] = useState<string | null>(null);
+
+  // In-Meeting Tabs and Teams CART Integration State
+  const [activeTab, setActiveTab] = useState<'channels' | 'cart' | 'teams_app'>('channels');
+  const [cartUrl, setCartUrl] = useState(session?.meetingIntegration?.teamsCartUrl || '');
+  const [cartLanguage, setCartLanguage] = useState(session?.meetingIntegration?.teamsCartLanguage || 'fr');
+  const [cartTestStatus, setCartTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [cartFeedback, setCartFeedback] = useState('');
+  const [isDownloadingTeams, setIsDownloadingTeams] = useState(false);
+
+  useEffect(() => {
+    if (session?.meetingIntegration) {
+      setCartUrl(session.meetingIntegration.teamsCartUrl || '');
+      setCartLanguage(session.meetingIntegration.teamsCartLanguage || 'fr');
+    }
+  }, [session]);
+
+  const handleSaveCartConfig = () => {
+    if (!session) return;
+    const updated = updateSession(session.id, {
+      meetingIntegration: {
+        ...session.meetingIntegration!,
+        teamsCartUrl: cartUrl.trim(),
+        teamsCartLanguage: cartLanguage,
+      },
+    });
+    if (updated) {
+      setCartFeedback('Teams CART configuration saved successfully.');
+      setTimeout(() => setCartFeedback(''), 3000);
+      onSessionUpdated?.();
+    }
+  };
+
+  const handleTestCart = async () => {
+    if (!cartUrl.trim()) {
+      setCartTestStatus('error');
+      setCartFeedback('Please enter a valid Teams CART URL first.');
+      return;
+    }
+    setCartTestStatus('testing');
+    setCartFeedback('Broadcasting test subtitle to Teams CART endpoint...');
+    const result = await testTeamsCartConnection(cartUrl.trim());
+    if (result.success) {
+      setCartTestStatus('success');
+      setCartFeedback('Success! Subtitle delivered to Microsoft Teams closed-captions banner.');
+      handleSaveCartConfig();
+    } else {
+      setCartTestStatus('error');
+      setCartFeedback(result.error || 'Failed to deliver subtitle to Teams.');
+    }
+  };
+
+  const handleDownloadTeams = async () => {
+    setIsDownloadingTeams(true);
+    try {
+      await downloadTeamsAppPackage();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to download Teams package');
+    } finally {
+      setIsDownloadingTeams(false);
+    }
+  };
 
   const controllerRef = useRef<MeetingBotController | null>(null);
   const ttsRef = useRef<ReturnType<typeof createSpeechSynthesisController> | null>(null);
@@ -204,200 +269,444 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
           )}
         </div>
 
-        {/* Bot Status & Lifecycle Card */}
-        <div className={styles.botStatusCard}>
-          <div className={styles.botStatusTop}>
-            <div className={styles.botInfo}>
-              <div className={styles.botAvatar}>
-                <Bot size={24} />
-              </div>
-              <div>
-                <h4 className={styles.botName}>{meeting.botName}</h4>
-                <p className={styles.botSubtitle}>
-                  {statusDetails || 'Virtual attendee ready to bridge meeting audio'}
-                </p>
-              </div>
-            </div>
+        {/* Navigation Tabs */}
+        <div className={styles.tabsNav}>
+          <button
+            className={`${styles.tabBtn} ${activeTab === 'channels' ? styles.tabBtnActive : ''}`}
+            onClick={() => setActiveTab('channels')}
+          >
+            <Radio size={15} />
+            <span>Simultaneous Channels</span>
+          </button>
 
-            <Badge 
-              variant={botStatus === 'streaming' ? 'live' : botStatus === 'connected' ? 'active' : 'upcoming'} 
-              pulse={botStatus === 'streaming'}
-            >
-              {botStatus.toUpperCase()}
-            </Badge>
-          </div>
+          <button
+            className={`${styles.tabBtn} ${activeTab === 'cart' ? styles.tabBtnActive : ''}`}
+            onClick={() => setActiveTab('cart')}
+          >
+            <Subtitles size={15} />
+            <span>In-Teams Captions (CART API)</span>
+          </button>
 
-          {/* Lifecycle Step Indicators */}
-          <div className={styles.lifecycleSteps}>
-            <div className={styles.lifecycleStep}>
-              <div className={`${styles.stepDot} ${['dispatching', 'in_lobby', 'connected', 'streaming'].includes(botStatus) ? styles.stepDotDone : ''}`} />
-              <span className={styles.stepLabel}>1. Dispatch</span>
-            </div>
-            <div className={styles.lifecycleStep}>
-              <div className={`${styles.stepDot} ${['in_lobby', 'connected', 'streaming'].includes(botStatus) ? styles.stepDotDone : ''}`} />
-              <span className={styles.stepLabel}>2. Waiting Room</span>
-            </div>
-            <div className={styles.lifecycleStep}>
-              <div className={`${styles.stepDot} ${['connected', 'streaming'].includes(botStatus) ? styles.stepDotDone : ''}`} />
-              <span className={styles.stepLabel}>3. Admitted</span>
-            </div>
-            <div className={styles.lifecycleStep}>
-              <div className={`${styles.stepDot} ${botStatus === 'streaming' ? styles.stepDotActive : ''}`} />
-              <span className={styles.stepLabel}>4. Streaming Audio</span>
-            </div>
-          </div>
-
-          {/* Error display */}
-          {errorMessage && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--vacfa-red-light)', fontSize: '0.85rem' }}>
-              <AlertCircle size={16} />
-              <span>{errorMessage}</span>
-            </div>
-          )}
-
-          {/* Bot Control Actions */}
-          <div className={styles.controlsRow}>
-            {botStatus === 'idle' || botStatus === 'disconnected' ? (
-              <Button
-                variant="primary"
-                icon={<Bot size={16} />}
-                onClick={() => controllerRef.current?.dispatch()}
-              >
-                Invite Bot to Meeting
-              </Button>
-            ) : botStatus === 'streaming' ? (
-              <>
-                <Button
-                  variant="danger"
-                  icon={<Square size={16} />}
-                  onClick={() => controllerRef.current?.stopAudioCapture()}
-                >
-                  Stop Audio Ingest
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => controllerRef.current?.disconnect()}
-                >
-                  Disconnect Bot
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="primary"
-                  icon={<Mic size={16} />}
-                  onClick={() => controllerRef.current?.startScreenAudioCapture()}
-                >
-                  Capture Teams/Zoom Tab Audio
-                </Button>
-                <Button
-                  variant="outline"
-                  icon={<Play size={16} />}
-                  onClick={() => controllerRef.current?.startSimulatedRelay()}
-                >
-                  Simulate Meeting Audio
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => controllerRef.current?.disconnect()}
-                >
-                  Disconnect
-                </Button>
-              </>
-            )}
-          </div>
+          <button
+            className={`${styles.tabBtn} ${activeTab === 'teams_app' ? styles.tabBtnActive : ''}`}
+            onClick={() => setActiveTab('teams_app')}
+          >
+            <Layers size={15} />
+            <span>Teams In-Meeting App</span>
+          </button>
         </div>
 
-        {/* Live Audio Telemetry */}
-        <div className={styles.telemetryGrid}>
-          <div className={styles.telemetryItem}>
-            <span className={styles.telemetryLabel}>Ingest Sample Rate</span>
-            <span className={styles.telemetryValue}>48.0 kHz</span>
-          </div>
-          <div className={styles.telemetryItem}>
-            <span className={styles.telemetryLabel}>Bitrate</span>
-            <span className={styles.telemetryValue}>{botStatus === 'streaming' ? '128 kbps' : '0 kbps'}</span>
-          </div>
-          <div className={styles.telemetryItem}>
-            <span className={styles.telemetryLabel}>AI Translation Latency</span>
-            <span className={styles.telemetryValue}>~340 ms</span>
-          </div>
-          <div className={styles.telemetryItem}>
-            <span className={styles.telemetryLabel}>Packet Loss</span>
-            <span className={styles.telemetryValue}>0.0%</span>
-          </div>
-        </div>
-
-        {/* Real-Time Interpretation Channels */}
-        <div className={styles.channelsSection}>
-          <h4 className={styles.sectionTitle}>
-            <Radio size={16} color="var(--vacfa-red-light)" /> Simultaneous Interpretation Channels
-          </h4>
-
-          <div className={styles.channelList}>
-            {channels.map((chan) => {
-              const isMonitoring = monitoringLang === chan.language.code;
-              return (
-                <div
-                  key={chan.language.code}
-                  className={`${styles.channelCard} ${chan.isStreaming ? styles.channelCardActive : ''}`}
-                >
-                  <div className={styles.channelLeft}>
-                    <div>
-                      <div className={styles.channelLangName}>{chan.language.name} ({chan.language.nativeName})</div>
-                      <div className={styles.channelMeta}>
-                        <span>Latency: {chan.latencyMs}ms</span>
-                        <span>•</span>
-                        <span>{chan.listenerCount} Active Delegates</span>
-                        <span>•</span>
-                        <span style={{ color: chan.isStreaming ? 'var(--success)' : 'var(--grey-400)' }}>
-                          {chan.isStreaming ? 'Active Audio Stream' : 'Standby'}
-                        </span>
-                      </div>
-                    </div>
+        {/* Tab 1: Simultaneous Audio Channels */}
+        {activeTab === 'channels' && (
+          <>
+            {/* Bot Status & Lifecycle Card */}
+            <div className={styles.botStatusCard}>
+              <div className={styles.botStatusTop}>
+                <div className={styles.botInfo}>
+                  <div className={styles.botAvatar}>
+                    <Bot size={24} />
                   </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    {/* VU Meter */}
-                    <div className={styles.vuMeter} title="Channel Audio Level">
-                      {[0.3, 0.7, 1.0, 0.5].map((scale, i) => (
-                        <div
-                          key={i}
-                          className={styles.vuBar}
-                          style={{
-                            height: chan.isStreaming ? `${Math.max(15, chan.audioLevel * 100 * scale)}%` : '15%',
-                            backgroundColor: chan.isStreaming ? 'var(--success)' : 'var(--grey-700)',
-                          }}
-                        />
-                      ))}
-                    </div>
-
-                    {/* Listen In Toggle */}
-                    <button
-                      onClick={() => handleMonitorChannel(chan.language.code)}
-                      style={{
-                        background: isMonitoring ? 'rgba(76, 175, 80, 0.2)' : 'rgba(255, 255, 255, 0.06)',
-                        border: `1px solid ${isMonitoring ? 'var(--success)' : 'rgba(255, 255, 255, 0.12)'}`,
-                        color: isMonitoring ? 'var(--success)' : 'var(--cream)',
-                        borderRadius: '8px',
-                        padding: '6px 10px',
-                        cursor: 'pointer',
-                        fontSize: '0.75rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
-                      title="Listen into this interpretation channel"
-                    >
-                      {isMonitoring ? <Volume2 size={13} className="animate-pulse" /> : <VolumeX size={13} />}
-                      <span>{isMonitoring ? 'Listening' : 'Listen In'}</span>
-                    </button>
+                  <div>
+                    <h4 className={styles.botName}>{meeting.botName}</h4>
+                    <p className={styles.botSubtitle}>
+                      {statusDetails || 'Virtual attendee ready to bridge meeting audio'}
+                    </p>
                   </div>
                 </div>
-              );
-            })}
+
+                <Badge 
+                  variant={botStatus === 'streaming' ? 'live' : botStatus === 'connected' ? 'active' : 'upcoming'} 
+                  pulse={botStatus === 'streaming'}
+                >
+                  {botStatus.toUpperCase()}
+                </Badge>
+              </div>
+
+              {/* Lifecycle Step Indicators */}
+              <div className={styles.lifecycleSteps}>
+                <div className={styles.lifecycleStep}>
+                  <div className={`${styles.stepDot} ${['dispatching', 'in_lobby', 'connected', 'streaming'].includes(botStatus) ? styles.stepDotDone : ''}`} />
+                  <span className={styles.stepLabel}>1. Dispatch</span>
+                </div>
+                <div className={styles.lifecycleStep}>
+                  <div className={`${styles.stepDot} ${['in_lobby', 'connected', 'streaming'].includes(botStatus) ? styles.stepDotDone : ''}`} />
+                  <span className={styles.stepLabel}>2. Waiting Room</span>
+                </div>
+                <div className={styles.lifecycleStep}>
+                  <div className={`${styles.stepDot} ${['connected', 'streaming'].includes(botStatus) ? styles.stepDotDone : ''}`} />
+                  <span className={styles.stepLabel}>3. Admitted</span>
+                </div>
+                <div className={styles.lifecycleStep}>
+                  <div className={`${styles.stepDot} ${botStatus === 'streaming' ? styles.stepDotActive : ''}`} />
+                  <span className={styles.stepLabel}>4. Streaming Audio</span>
+                </div>
+              </div>
+
+              {/* Error display */}
+              {errorMessage && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--vacfa-red-light)', fontSize: '0.85rem' }}>
+                  <AlertCircle size={16} />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              {/* Bot Control Actions */}
+              <div className={styles.controlsRow}>
+                {botStatus === 'idle' || botStatus === 'disconnected' ? (
+                  <Button
+                    variant="primary"
+                    icon={<Bot size={16} />}
+                    onClick={() => controllerRef.current?.dispatch()}
+                  >
+                    Invite Bot to Meeting
+                  </Button>
+                ) : botStatus === 'streaming' ? (
+                  <>
+                    <Button
+                      variant="danger"
+                      icon={<Square size={16} />}
+                      onClick={() => controllerRef.current?.stopAudioCapture()}
+                    >
+                      Stop Audio Ingest
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => controllerRef.current?.disconnect()}
+                    >
+                      Disconnect Bot
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="primary"
+                      icon={<Mic size={16} />}
+                      onClick={() => controllerRef.current?.startScreenAudioCapture()}
+                    >
+                      Capture Teams/Zoom Tab Audio
+                    </Button>
+                    <Button
+                      variant="outline"
+                      icon={<Play size={16} />}
+                      onClick={() => controllerRef.current?.startSimulatedRelay()}
+                    >
+                      Simulate Meeting Audio
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => controllerRef.current?.disconnect()}
+                    >
+                      Disconnect
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Live Audio Telemetry */}
+            <div className={styles.telemetryGrid}>
+              <div className={styles.telemetryItem}>
+                <span className={styles.telemetryLabel}>Ingest Sample Rate</span>
+                <span className={styles.telemetryValue}>48.0 kHz</span>
+              </div>
+              <div className={styles.telemetryItem}>
+                <span className={styles.telemetryLabel}>Bitrate</span>
+                <span className={styles.telemetryValue}>{botStatus === 'streaming' ? '128 kbps' : '0 kbps'}</span>
+              </div>
+              <div className={styles.telemetryItem}>
+                <span className={styles.telemetryLabel}>AI Translation Latency</span>
+                <span className={styles.telemetryValue}>~340 ms</span>
+              </div>
+              <div className={styles.telemetryItem}>
+                <span className={styles.telemetryLabel}>Packet Loss</span>
+                <span className={styles.telemetryValue}>0.0%</span>
+              </div>
+            </div>
+
+            {/* Real-Time Interpretation Channels */}
+            <div className={styles.channelsSection}>
+              <h4 className={styles.sectionTitle}>
+                <Radio size={16} color="var(--vacfa-red-light)" /> Simultaneous Interpretation Channels
+              </h4>
+
+              <div className={styles.channelList}>
+                {channels.map((chan) => {
+                  const isMonitoring = monitoringLang === chan.language.code;
+                  return (
+                    <div
+                      key={chan.language.code}
+                      className={`${styles.channelCard} ${chan.isStreaming ? styles.channelCardActive : ''}`}
+                    >
+                      <div className={styles.channelLeft}>
+                        <div>
+                          <div className={styles.channelLangName}>{chan.language.name} ({chan.language.nativeName})</div>
+                          <div className={styles.channelMeta}>
+                            <span>Latency: {chan.latencyMs}ms</span>
+                            <span>•</span>
+                            <span>{chan.listenerCount} Active Delegates</span>
+                            <span>•</span>
+                            <span style={{ color: chan.isStreaming ? 'var(--success)' : 'var(--grey-400)' }}>
+                              {chan.isStreaming ? 'Active Audio Stream' : 'Standby'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        {/* VU Meter */}
+                        <div className={styles.vuMeter} title="Channel Audio Level">
+                          {[0.3, 0.7, 1.0, 0.5].map((scale, i) => (
+                            <div
+                              key={i}
+                              className={styles.vuBar}
+                              style={{
+                                height: chan.isStreaming ? `${Math.max(15, chan.audioLevel * 100 * scale)}%` : '15%',
+                                backgroundColor: chan.isStreaming ? 'var(--success)' : 'var(--grey-700)',
+                              }}
+                            />
+                          ))}
+                        </div>
+
+                        {/* Listen In Toggle */}
+                        <button
+                          onClick={() => handleMonitorChannel(chan.language.code)}
+                          style={{
+                            background: isMonitoring ? 'rgba(76, 175, 80, 0.2)' : 'rgba(255, 255, 255, 0.06)',
+                            border: `1px solid ${isMonitoring ? 'var(--success)' : 'rgba(255, 255, 255, 0.12)'}`,
+                            color: isMonitoring ? 'var(--success)' : 'var(--cream)',
+                            borderRadius: '8px',
+                            padding: '6px 10px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                          title="Listen into this interpretation channel"
+                        >
+                          {isMonitoring ? <Volume2 size={13} className="animate-pulse" /> : <VolumeX size={13} />}
+                          <span>{isMonitoring ? 'Listening' : 'Listen In'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Tab 2: In-Teams Native Subtitles (CART API) */}
+        {activeTab === 'cart' && (
+          <div className={styles.cartSection}>
+            <div className={styles.cartCard}>
+              <div className={styles.cartHeader}>
+                <h4 className={styles.cartTitle}>
+                  <Subtitles size={18} color="var(--vacfa-red-light)" />
+                  Microsoft Teams Live Closed Captions (CART API)
+                </h4>
+                <Badge
+                  variant={cartUrl ? 'active' : 'upcoming'}
+                  pulse={cartTestStatus === 'testing'}
+                >
+                  {cartUrl ? 'CONFIGURED' : 'UNCONFIGURED'}
+                </Badge>
+              </div>
+
+              <p className={styles.cartDescription}>
+                Stream real-time translated subtitles directly into Microsoft Teams’ built-in closed-captioning banner at the bottom of the video for all meeting delegates.
+              </p>
+
+              <div className={styles.cartInputGroup}>
+                <label className={styles.cartInputLabel}>Teams CART Ingestion URL</label>
+                <input
+                  type="url"
+                  className={styles.cartInput}
+                  placeholder="https://[region].api.teams.skype.com/v1/meetings/[id]/cartcaptions?token=[token]"
+                  value={cartUrl}
+                  onChange={(e) => setCartUrl(e.target.value)}
+                />
+              </div>
+
+              <div className={styles.cartInputGroup}>
+                <label className={styles.cartInputLabel}>Target Subtitle Language for Teams</label>
+                <select
+                  className={styles.cartLangSelect}
+                  value={cartLanguage}
+                  onChange={(e) => setCartLanguage(e.target.value)}
+                >
+                  <option value="fr">French (Français)</option>
+                  <option value="pt">Portuguese (Português Africano)</option>
+                  <option value="sw">Swahili (Kiswahili Afrika Mashariki)</option>
+                  <option value="en">English (Original Floor Audio)</option>
+                </select>
+              </div>
+
+              <div className={styles.cartActionsRow}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Send size={14} />}
+                  onClick={handleTestCart}
+                  disabled={cartTestStatus === 'testing' || !cartUrl.trim()}
+                >
+                  {cartTestStatus === 'testing' ? 'Broadcasting...' : 'Save & Send Test Subtitle'}
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSaveCartConfig}
+                  disabled={!cartUrl.trim()}
+                >
+                  Save Configuration
+                </Button>
+              </div>
+
+              {cartFeedback && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                    background:
+                      cartTestStatus === 'error'
+                        ? 'rgba(196, 30, 58, 0.2)'
+                        : 'rgba(76, 175, 80, 0.2)',
+                    color:
+                      cartTestStatus === 'error'
+                        ? 'var(--vacfa-red-light)'
+                        : 'var(--success)',
+                    border: `1px solid ${
+                      cartTestStatus === 'error'
+                        ? 'var(--vacfa-red)'
+                        : 'var(--success)'
+                    }`,
+                  }}
+                >
+                  {cartFeedback}
+                </div>
+              )}
+            </div>
+
+            {/* Step-by-Step Instructions */}
+            <div className={styles.instructionsBox}>
+              <h5 className={styles.instructionsTitle}>
+                <Info size={16} color="#7B83EB" /> How to get the Teams CART URL from your Meeting
+              </h5>
+              <ol className={styles.instructionSteps}>
+                <li>
+                  In your Microsoft Teams meeting or webinar, click <strong>More (...)</strong> &gt; <strong>Meeting options</strong> (or <strong>Settings</strong> &gt; <strong>Meeting options</strong>).
+                </li>
+                <li>
+                  Scroll to <strong>Captions and transcripts</strong> and toggle <strong>Provide CART Captions</strong> to <strong>ON</strong>.
+                </li>
+                <li>
+                  Click <strong>Save</strong> at the bottom of the Meeting Options pane. Teams will generate and display a unique CART caption ingestion URL.
+                </li>
+                <li>
+                  Click <strong>Copy link</strong> and paste it into the field above.
+                </li>
+                <li>
+                  Once saved, attendees who click <strong>More (...)</strong> &gt; <strong>Language and speech</strong> &gt; <strong>Turn on live captions</strong> will see live VACFA AI translations directly in Microsoft Teams!
+                </li>
+              </ol>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Tab 3: Teams In-Meeting App & Routing */}
+        {activeTab === 'teams_app' && (
+          <div className={styles.cartSection}>
+            <div className={styles.teamsAppPackageCard}>
+              <div className={styles.cartHeader}>
+                <h4 className={styles.cartTitle} style={{ color: '#8E96F7' }}>
+                  <Layers size={18} color="#8E96F7" />
+                  Microsoft Teams In-Meeting Side Panel App
+                </h4>
+                <Badge variant="live" pulse>TEAMS CERTIFIED READY</Badge>
+              </div>
+
+              <p className={styles.cartDescription}>
+                Download the official VACFA Translate Microsoft Teams App package (<code>vacfa-teams-app.zip</code>). Upload it directly into your Teams meeting or tenant so attendees can open the interpretation side panel right next to their video.
+              </p>
+
+              <div className={styles.cartActionsRow}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  icon={<Download size={16} />}
+                  onClick={handleDownloadTeams}
+                  disabled={isDownloadingTeams}
+                >
+                  {isDownloadingTeams ? 'Packaging...' : 'Download Teams App Package (.zip)'}
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="md"
+                  icon={<ExternalLink size={14} />}
+                  onClick={() => {
+                    const testUrl = typeof window !== 'undefined'
+                      ? `${window.location.origin}${process.env.NODE_ENV === 'production' ? '/vacfa-translate' : ''}/live/${session.id}/?embed=teams`
+                      : `/live/${session.id}/?embed=teams`;
+                    window.open(testUrl, '_blank');
+                  }}
+                >
+                  Preview Teams Side Panel UI
+                </Button>
+              </div>
+            </div>
+
+            {/* Step-by-Step Instructions */}
+            <div className={styles.instructionsBox}>
+              <h5 className={styles.instructionsTitle}>
+                <Info size={16} color="#7B83EB" /> How to install into a Teams Meeting or Webinar
+              </h5>
+              <ol className={styles.instructionSteps}>
+                <li>
+                  Download the <code>vacfa-teams-app.zip</code> package using the button above.
+                </li>
+                <li>
+                  During your Microsoft Teams call, click the <strong>+ Apps</strong> icon in the top meeting control bar.
+                </li>
+                <li>
+                  Click <strong>Manage apps</strong> &gt; <strong>Upload a custom app</strong> &gt; Select <code>vacfa-teams-app.zip</code>.
+                </li>
+                <li>
+                  Click <strong>Add</strong> &gt; <strong>Save</strong>. The VACFA Translate icon will appear in the meeting toolbar.
+                </li>
+                <li>
+                  When delegates click the icon, a side panel opens on the right displaying live French, Portuguese, and Swahili interpretation audio channels and real-time synchronized text without leaving Teams!
+                </li>
+              </ol>
+            </div>
+
+            {/* Native Teams Language Interpretation Channel Guide */}
+            <div className={styles.instructionsBox}>
+              <h5 className={styles.instructionsTitle}>
+                <Radio size={16} color="var(--vacfa-red-light)" /> Native Teams Language Interpretation Channels
+              </h5>
+              <p style={{ margin: '0 0 8px 0', fontSize: '0.82rem', color: 'var(--grey-400)', lineHeight: 1.5 }}>
+                For enterprise Microsoft Teams E3/E5 and Teams Webinars, you can also map VACFA AI to native Teams interpretation audio channels:
+              </p>
+              <ol className={styles.instructionSteps}>
+                <li>
+                  In Teams Meeting Options, toggle <strong>Enable language interpretation</strong> to <strong>ON</strong>.
+                </li>
+                <li>
+                  Add interpretation pairs: e.g., <strong>English to French</strong>, <strong>English to Portuguese</strong>, <strong>English to Swahili</strong>.
+                </li>
+                <li>
+                  Designate the VACFA virtual participant account as the interpreter for that channel.
+                </li>
+                <li>
+                  Delegates click <strong>... More</strong> &gt; <strong>Language interpretation</strong> &gt; Select their language. Teams will natively mute floor audio to 20% and route the AI interpreter stream directly into their headset!
+                </li>
+              </ol>
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   );

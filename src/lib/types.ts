@@ -27,6 +27,10 @@ export interface MeetingIntegration {
   sourceLanguage: string;
   targetLanguages: string[]; // language codes for interpretation channels
   audioCaptureMode?: 'screen_audio' | 'simulated_relay' | 'mic_relay';
+  teamsCartUrl?: string;
+  teamsCartLanguage?: string; // language code to send to CART, e.g. 'fr' | 'pt' | 'sw' | 'en' | 'all'
+  teamsCartStatus?: 'idle' | 'streaming' | 'error';
+  teamsCartLastPost?: string;
   lastStatusMessage?: string;
   connectedAt?: string;
 }

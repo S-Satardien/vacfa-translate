@@ -217,3 +217,189 @@
 .channelActive .listenerCount {
   color: rgba(255, 255, 255, 0.8);
 }
+
+/* ==========================================================================
+   Microsoft Teams In-Meeting Side Panel Styles
+   ========================================================================== */
+
+.teamsContainer {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  background-color: #1F1F1F;
+  color: #F5F0E8;
+  font-family: 'Segoe UI', var(--font-inter, sans-serif);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.teamsHeader {
+  padding: 12px 14px;
+  background: rgba(32, 31, 31, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.teamsTopRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.teamsBrand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.teamsLogo {
+  font-weight: 800;
+  font-size: 1rem;
+  letter-spacing: -0.3px;
+  color: #FFFFFF;
+}
+
+.teamsLogoSpan {
+  color: var(--vacfa-red, #C41E3A);
+}
+
+.teamsBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(84, 91, 199, 0.2);
+  color: #8E96F7;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border: 1px solid rgba(84, 91, 199, 0.4);
+}
+
+.teamsAudioControlCard {
+  background: rgba(45, 45, 45, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.teamsAudioToggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.teamsAudioBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.teamsAudioBtnActive {
+  background: var(--vacfa-red, #C41E3A);
+  color: #FFFFFF;
+  box-shadow: 0 0 12px rgba(196, 30, 58, 0.5);
+}
+
+.teamsAudioBtnMuted {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--grey-400, #9E9E9E);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.teamsLangChips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.teamsLangChip {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--grey-400, #9E9E9E);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.teamsLangChip:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+}
+
+.teamsLangChipActive {
+  background: rgba(196, 30, 58, 0.25);
+  border-color: var(--vacfa-red, #C41E3A);
+  color: #FFFFFF;
+}
+
+.teamsCaptionsStream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.teamsCaptionCard {
+  background: rgba(36, 36, 36, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.teamsCaptionMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--grey-400, #9E9E9E);
+  margin-bottom: 4px;
+}
+
+.teamsOriginalSnippet {
+  font-size: 0.85rem;
+  color: #888888;
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+
+.teamsTranslatedSnippet {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #FFFFFF;
+  line-height: 1.4;
+}
+
+.teamsFooter {
+  padding: 8px 12px;
+  background: rgba(32, 31, 31, 0.95);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+

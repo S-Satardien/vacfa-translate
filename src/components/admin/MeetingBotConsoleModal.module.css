@@ -286,3 +286,167 @@
   min-height: 3px;
   transition: height 0.08s ease;
 }
+
+/* ==========================================================================
+   Navigation Tabs & Teams Integration Hub Styles
+   ========================================================================== */
+
+.tabsNav {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+}
+
+.tabBtn {
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--grey-400);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.tabBtn:hover {
+  color: var(--white);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tabBtnActive {
+  color: #FFFFFF;
+  background: rgba(196, 30, 58, 0.15);
+  border-color: rgba(196, 30, 58, 0.4);
+}
+
+.cartSection {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.cartCard {
+  background: rgba(26, 26, 26, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cartHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cartTitle {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--white);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cartDescription {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--grey-400);
+  line-height: 1.4;
+}
+
+.cartInputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cartInputLabel {
+  font-size: 0.8rem;
+  color: var(--grey-400);
+  font-weight: 600;
+}
+
+.cartInput {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-primary);
+  border: 1px solid var(--surface-elevated);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--white);
+  font-family: monospace;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.cartInput:focus {
+  border-color: var(--vacfa-red);
+}
+
+.cartLangSelect {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-primary);
+  border: 1px solid var(--surface-elevated);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--white);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.cartActionsRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.instructionsBox {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+}
+
+.instructionsTitle {
+  margin: 0 0 10px 0;
+  font-size: 0.9rem;
+  color: var(--cream);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.instructionSteps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.82rem;
+  color: var(--grey-400);
+  line-height: 1.6;
+}
+
+.instructionSteps li {
+  margin-bottom: 6px;
+}
+
+.teamsAppPackageCard {
+  background: rgba(84, 91, 199, 0.08);
+  border: 1px solid rgba(84, 91, 199, 0.25);
+  border-radius: 14px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+

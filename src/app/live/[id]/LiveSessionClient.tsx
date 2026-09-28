@@ -33,6 +33,7 @@ import {
   getActiveSessionGlossary,
 } from '@/lib/live-sync';
 import { createCaptionSimulator } from '@/lib/caption-simulator';
+import { sendTeamsCartCaption } from '@/lib/teams-cart';
 import styles from './LiveSession.module.css';
 
 interface LiveSessionClientProps {
@@ -61,6 +62,16 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [captionLang, setCaptionLang] = useState(session.languages[0]?.code || 'en');
   const [showCaptions, setShowCaptions] = useState(true);
   const [notes, setNotes] = useState('');
+
+  // Microsoft Teams In-Meeting Side Panel Detection
+  const [isTeamsEmbed, setIsTeamsEmbed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const search = window.location.search;
+      setIsTeamsEmbed(search.includes('embed=teams') || search.includes('teams=true'));
+    }
+  }, []);
 
   // Live audio listening (TTS) — default to muted per user preference
   const [isAudioMuted, setIsAudioMuted] = useState(true);
@@ -169,6 +180,15 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         setCaptions((prev) => prev.map((c) => (c.id === captionId ? updatedEntry : c)));
         broadcastCaptionFinal(updatedEntry);
         playCaptionAudio(updatedEntry);
+
+        // Stream to Microsoft Teams CART API if configured
+        if (currentSession.meetingIntegration?.teamsCartUrl) {
+          const cartLang = currentSession.meetingIntegration.teamsCartLanguage || 'fr';
+          const cartText = updatedEntry.translations?.[cartLang] || updatedEntry.originalText;
+          sendTeamsCartCaption(currentSession.meetingIntegration.teamsCartUrl, cartText, {
+            speaker: `VACFA (${cartLang.toUpperCase()})`,
+          }).catch(() => {});
+        }
       } catch (err: any) {
         setMicErrorMessage('Translation error: ' + (err?.message || 'Unknown error'));
       }
@@ -335,6 +355,228 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
     return <span dangerouslySetInnerHTML={{ __html: result }} />;
   };
+
+  if (isTeamsEmbed) {
+    return (
+      <div className={styles.teamsContainer}>
+        {/* Teams Header */}
+        <div className={styles.teamsHeader}>
+          <div className={styles.teamsTopRow}>
+            <div className={styles.teamsBrand}>
+              <div className={styles.teamsLogo}>
+                VACFA <span className={styles.teamsLogoSpan}>TRANSLATE</span>
+              </div>
+              <span className={styles.teamsBadge}>
+                <Bot size={11} /> Teams
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span
+                style={{
+                  background: 'var(--vacfa-red)',
+                  color: 'white',
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                }}
+              >
+                LIVE
+              </span>
+              <button
+                onClick={() => setIsAiConfigOpen(true)}
+                title="Gemini AI Settings"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: hasApiKey ? 'var(--success)' : 'var(--grey-400)',
+                  cursor: 'pointer',
+                  padding: '2px',
+                }}
+              >
+                <Sparkles size={14} />
+              </button>
+            </div>
+          </div>
+
+          {/* Teams Audio Control Card */}
+          <div className={styles.teamsAudioControlCard}>
+            <div className={styles.teamsAudioToggleRow}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Globe size={14} color="var(--vacfa-red-light)" />
+                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Audio Channel</span>
+              </div>
+
+              <button
+                className={`${styles.teamsAudioBtn} ${isAudioMuted ? styles.teamsAudioBtnMuted : styles.teamsAudioBtnActive}`}
+                onClick={() => {
+                  const nextState = !isAudioMuted;
+                  setIsAudioMuted(nextState);
+                  if (nextState) {
+                    ttsRef.current?.stop();
+                  } else {
+                    unlockAudioPlayback();
+                    playedCaptionIdsRef.current.clear();
+                    if (captions.length > 0) {
+                      const lastCap = captions[captions.length - 1];
+                      playedCaptionIdsRef.current.add(lastCap.id);
+                      const translated = lastCap.translations?.[audioLang] || lastCap.originalText;
+                      if (translated && translated !== '...') {
+                        ttsRef.current?.speak(translated, audioLang);
+                      }
+                    }
+                  }
+                }}
+              >
+                {isAudioMuted ? <VolumeX size={13} /> : <Volume2 size={13} className="animate-pulse" />}
+                <span>{isAudioMuted ? 'Muted' : 'Listening'}</span>
+              </button>
+            </div>
+
+            {/* Language Chips */}
+            <div className={styles.teamsLangChips}>
+              {currentSession.languages.map((lang) => {
+                const isActive = audioLang === lang.code;
+                return (
+                  <button
+                    key={lang.code}
+                    className={`${styles.teamsLangChip} ${isActive ? styles.teamsLangChipActive : ''}`}
+                    onClick={() => {
+                      if (audioLang === lang.code) return;
+                      ttsRef.current?.stop();
+                      setAudioLang(lang.code);
+                      setCaptionLang(lang.code);
+                      unlockAudioPlayback();
+                      playedCaptionIdsRef.current.clear();
+                      if (!isAudioMuted && captions.length > 0) {
+                        const lastCap = captions[captions.length - 1];
+                        playedCaptionIdsRef.current.add(lastCap.id);
+                        const translated = lastCap.translations?.[lang.code] || lastCap.originalText;
+                        if (translated && translated !== '...') {
+                          ttsRef.current?.speak(translated, lang.code);
+                        }
+                      }
+                    }}
+                  >
+                    {lang.code.toUpperCase()} • {lang.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Captions Feed */}
+        <div className={styles.teamsCaptionsStream}>
+          <AnimatePresence initial={false}>
+            {captions.map((cap, index) => (
+              <motion.div
+                key={`${cap.id}-${index}`}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={styles.teamsCaptionCard}
+              >
+                <div className={styles.teamsCaptionMeta}>
+                  <span><Mic size={11} className="inline mr-1" /> {cap.speaker}</span>
+                  <span>{cap.timestamp}</span>
+                </div>
+                {captionLang !== 'en' && (
+                  <div className={styles.teamsOriginalSnippet}>
+                    {cap.originalText}
+                  </div>
+                )}
+                <div className={styles.teamsTranslatedSnippet}>
+                  {renderTextWithGlossary(
+                    cap.translations?.[captionLang] || cap.originalText,
+                    cap.glossaryTerms
+                  )}
+                </div>
+              </motion.div>
+            ))}
+
+            {partialText && (
+              <motion.div
+                key="teams-partial"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className={styles.teamsCaptionCard}
+                style={{ opacity: 0.85, borderStyle: 'dashed' }}
+              >
+                <div className={styles.teamsCaptionMeta}>
+                  <span><Mic size={11} className="inline mr-1" /> {currentSpeaker || 'Speaking...'}</span>
+                </div>
+                <div className={styles.teamsTranslatedSnippet}>
+                  {partialText}
+                  <span className="animate-pulse">_</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <div ref={captionsEndRef} />
+        </div>
+
+        {/* Teams Bottom Footer */}
+        <div className={styles.teamsFooter}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsGlossaryModalOpen(true)}
+            icon={<PlusCircle size={13} />}
+          >
+            Suggest Term
+          </Button>
+
+          <Button
+            variant={isPresenterMicLive ? 'primary' : 'outline'}
+            size="sm"
+            onClick={togglePresenterMic}
+            icon={isPresenterMicLive ? <Mic size={13} className="animate-pulse" /> : <MicOff size={13} />}
+          >
+            {isPresenterMicLive ? 'Mic Live' : 'Present'}
+          </Button>
+        </div>
+
+        {/* Modals */}
+        <Modal
+          isOpen={isGlossaryModalOpen}
+          onClose={() => !glossarySubmitted && setIsGlossaryModalOpen(false)}
+          title="Add to Glossary Memory"
+        >
+          <form onSubmit={handleGlossarySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', padding: '0.5rem 0' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <label style={{ fontSize: '0.85rem', color: 'var(--grey-400)' }}>Source Term</label>
+              <input
+                type="text"
+                value={glossaryTerm}
+                onChange={(e) => setGlossaryTerm(e.target.value)}
+                placeholder="e.g. Seroconversion"
+                required
+                disabled={glossarySubmitted}
+                style={{
+                  width: '100%',
+                  background: 'var(--surface-primary)',
+                  border: '1px solid var(--surface-elevated)',
+                  borderRadius: '8px',
+                  padding: '0.65rem',
+                  color: 'var(--cream)',
+                }}
+              />
+            </div>
+            <Button type="submit" variant="primary" size="md" disabled={glossarySubmitted || !glossaryTerm.trim()}>
+              {glossarySubmitted ? 'Added!' : 'Submit'}
+            </Button>
+          </form>
+        </Modal>
+
+        <AiConfigModal
+          isOpen={isAiConfigOpen}
+          onClose={() => setIsAiConfigOpen(false)}
+          onConfigSaved={() => setHasApiKey(Boolean(getStoredApiKey()))}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={styles.container}>

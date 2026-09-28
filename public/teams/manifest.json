@@ -1,0 +1,60 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "c16828a2-2b22-4876-b633-85e7837072a4",
+  "packageName": "com.vacfa.translate",
+  "developer": {
+    "name": "VACFA - Vaccines for Africa Initiative",
+    "websiteUrl": "https://s-satardien.github.io/vacfa-translate",
+    "privacyUrl": "https://s-satardien.github.io/vacfa-translate/privacy",
+    "termsOfUseUrl": "https://s-satardien.github.io/vacfa-translate/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "VACFA Translate",
+    "full": "VACFA Real-Time African Conference & Meeting Interpreter"
+  },
+  "description": {
+    "short": "In-meeting AI interpretation & live captions for African languages.",
+    "full": "Simultaneous AI interpretation and real-time live captions in French, Portuguese, and Swahili directly inside Microsoft Teams meetings and webinars."
+  },
+  "accentColor": "#C41E3A",
+  "configurableTabs": [
+    {
+      "configurationUrl": "https://s-satardien.github.io/vacfa-translate/teams/config.html",
+      "canUpdateConfiguration": true,
+      "scopes": [
+        "groupChat",
+        "team"
+      ],
+      "context": [
+        "meetingSidePanel",
+        "meetingStage",
+        "meetingDetailsTab",
+        "meetingChatTab"
+      ]
+    }
+  ],
+  "staticTabs": [
+    {
+      "entityId": "vacfa_dashboard",
+      "name": "VACFA Portal",
+      "contentUrl": "https://s-satardien.github.io/vacfa-translate/dashboard",
+      "scopes": [
+        "personal"
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "s-satardien.github.io",
+    "localhost"
+  ]
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VACFA Translate - Teams Configuration</title>
+  <script src="https://res.cdn.office.net/teams-js/2.19.0/js/MicrosoftTeams.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1A1A1A;
+      color: #F5F0E8;
+      margin: 0;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 80vh;
+      text-align: center;
+    }
+    .card {
+      background: rgba(40, 40, 40, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 440px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    .logo {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: #FFFFFF;
+      margin-bottom: 8px;
+    }
+    .logo span {
+      color: #C41E3A;
+    }
+    h2 {
+      font-size: 18px;
+      margin: 8px 0 16px 0;
+      color: #FFFFFF;
+    }
+    p {
+      font-size: 14px;
+      color: #9E9E9E;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .session-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: 1px solid #424242;
+      background: #0F0F0F;
+      color: #FFFFFF;
+      font-size: 15px;
+      margin-bottom: 16px;
+      text-align: center;
+      font-weight: 600;
+    }
+    .session-input:focus {
+      outline: none;
+      border-color: #C41E3A;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      background: rgba(196, 30, 58, 0.2);
+      color: #E8485E;
+      border: 1px solid #C41E3A;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Microsoft Teams In-Meeting App</div>
+    <div class="logo">VACFA <span>TRANSLATE</span></div>
+    <h2>Real-Time AI Interpretation Side Panel</h2>
+    <p>
+      Connect this Teams meeting to VACFA Translate. When saved, attendees will see the VACFA interpretation icon in their top meeting bar and can listen to simultaneous French, Portuguese, and Swahili translations directly in Teams.
+    </p>
+
+    <label for="sessionCode" style="font-size: 12px; color: #9E9E9E; display: block; margin-bottom: 6px;">
+      Optional: Enter Session ID (defaults to active session)
+    </label>
+    <input type="text" id="sessionCode" class="session-input" placeholder="e.g. 1" value="1" />
+  </div>
+
+  <script>
+    if (window.microsoftTeams) {
+      microsoftTeams.app.initialize().then(() => {
+        microsoftTeams.pages.config.setValidityState(true);
+
+        microsoftTeams.pages.config.registerOnSaveHandler((saveEvent) => {
+          const sessionVal = document.getElementById('sessionCode').value.trim() || '1';
+          const contentUrl = `${window.location.origin}/vacfa-translate/live/${sessionVal}/?embed=teams`;
+
+          microsoftTeams.pages.config.setConfig({
+            suggestedDisplayName: "VACFA Interpretation",
+            contentUrl: contentUrl,
+            websiteUrl: `${window.location.origin}/vacfa-translate/live/${sessionVal}/`,
+            entityId: `vacfa_session_${sessionVal}`
+          }).then(() => {
+            saveEvent.notifySuccess();
+          }).catch((err) => {
+            saveEvent.notifyFailure(err);
+          });
+        });
+      }).catch((err) => {
+        console.warn("Teams SDK init outside Teams context", err);
+      });
+    }
+  </script>
+</body>
+</html>

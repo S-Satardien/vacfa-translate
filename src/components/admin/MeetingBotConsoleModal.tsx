@@ -42,6 +42,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
   const [audioLevel, setAudioLevel] = useState(0);
   const [channels, setChannels] = useState<InterpretationChannelStatus[]>([]);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedFrLink, setCopiedFrLink] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [monitoringLang, setMonitoringLang] = useState<string | null>(null);
   const [floorLanguage, setFloorLanguage] = useState<'auto' | 'en' | 'fr' | 'pt' | 'sw'>('auto');
@@ -168,6 +169,23 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
     }
   }, [session?.id, isOpen]);
 
+  // Subscribe to live synchronized captions to play spoken audio when an admin monitors a channel
+  useEffect(() => {
+    if (!monitoringLang || !isOpen) return;
+
+    const unsubscribe = subscribeToLiveSync({
+      onCaptionFinal: (caption) => {
+        if (!ttsRef.current) return;
+        const translated = caption.translations?.[monitoringLang] || caption.originalText;
+        if (translated && translated !== '...' && translated.trim()) {
+          ttsRef.current.speak(translated, monitoringLang);
+        }
+      },
+    });
+
+    return () => unsubscribe();
+  }, [monitoringLang, isOpen]);
+
   const handleInviteBot = async () => {
     if (!controllerRef.current) return;
     setErrorMessage('');
@@ -210,24 +228,6 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const [copiedFrLink, setCopiedFrLink] = useState(false);
-
-  // Subscribe to live synchronized captions to play spoken audio when an admin monitors a channel
-  useEffect(() => {
-    if (!monitoringLang || !isOpen) return;
-
-    const unsubscribe = subscribeToLiveSync({
-      onCaptionFinal: (caption) => {
-        if (!ttsRef.current) return;
-        const translated = caption.translations?.[monitoringLang] || caption.originalText;
-        if (translated && translated !== '...' && translated.trim()) {
-          ttsRef.current.speak(translated, monitoringLang);
-        }
-      },
-    });
-
-    return () => unsubscribe();
-  }, [monitoringLang, isOpen]);
 
   const getLanguageListenerUrl = (lang = 'fr') => {
     if (typeof window === 'undefined') return '';

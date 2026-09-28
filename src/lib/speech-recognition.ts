@@ -253,13 +253,21 @@ export function createSpeechRecognitionController(
     setLanguage(langCode: string): void {
       const mapping: Record<string, string> = {
         en: 'en-ZA', // Tuned for African English accents (South Africa, Kenya, Nigeria, Ghana)
-        fr: 'fr-FR',
-        pt: 'pt-PT', // Tuned for African Lusophone Portuguese (Angola, Mozambique)
-        sw: 'sw-KE', // Tuned for East African Swahili (Kenya, Tanzania)
+        fr: 'fr-FR', // French (European / West African)
+        pt: 'pt-PT', // African Lusophone Portuguese (Angola, Mozambique)
+        sw: 'sw-KE', // East African Swahili (Kenya, Tanzania)
       };
       activeLang = mapping[langCode] || langCode;
       if (recognition) {
         recognition.lang = activeLang;
+        // If actively listening, restart recognition to ensure the browser switches acoustic models
+        if (isListeningState) {
+          try {
+            recognition.stop();
+          } catch {
+            // Handled in onend
+          }
+        }
       }
     },
   };

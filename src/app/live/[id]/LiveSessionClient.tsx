@@ -81,7 +81,13 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [isPresenterMicLive, setIsPresenterMicLive] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [micErrorMessage, setMicErrorMessage] = useState('');
+  const [floorLanguage, setFloorLanguage] = useState<'auto' | 'en' | 'fr' | 'pt' | 'sw'>('auto');
   const speechRecognizerRef = useRef<ReturnType<typeof createSpeechRecognitionController> | null>(null);
+
+  const handleFloorLanguageChange = (lang: 'auto' | 'en' | 'fr' | 'pt' | 'sw') => {
+    setFloorLanguage(lang);
+    speechRecognizerRef.current?.setLanguage(lang === 'auto' ? 'en' : lang);
+  };
 
   // Live Captions state
   const [captions, setCaptions] = useState<CaptionEntry[]>([]);
@@ -146,14 +152,15 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       if (!finalTranscript.trim()) return;
 
       setPartialText('');
-      const speakerName = 'Presenter (Live)';
-      setCurrentSpeaker(speakerName);
+      const initialSpeaker =
+        floorLanguage === 'auto' ? 'Presenter (Live)' : `Presenter (${floorLanguage.toUpperCase()})`;
+      setCurrentSpeaker(initialSpeaker);
 
       const captionId = `live-cap-${Date.now()}`;
       // 1. Instant Optimistic Render: Display the user's sentence immediately (0ms delay!)
       const initialEntry: CaptionEntry = {
         id: captionId,
-        speaker: speakerName,
+        speaker: initialSpeaker,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         originalText: finalTranscript,
         translations: {
@@ -167,12 +174,20 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
       setCaptions((prev) => [...prev, initialEntry]);
 
-      // 2. Sub-second Gemini 3.5 Flash translation
+      // 2. Sub-second Gemini 2.0 Flash bidirectional translation
       try {
-        const result = await translateText(finalTranscript, undefined, activeGlossary);
+        const result = await translateText(
+          finalTranscript,
+          floorLanguage === 'auto' ? undefined : floorLanguage,
+          activeGlossary
+        );
+
+        const detectedLang = result.sourceLang || 'en';
+        const finalSpeaker = `Presenter (${detectedLang.toUpperCase()})`;
 
         const updatedEntry: CaptionEntry = {
           ...initialEntry,
+          speaker: finalSpeaker,
           translations: result.translations,
           glossaryTerms: result.glossaryTerms,
         };
@@ -201,7 +216,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         setMicErrorMessage('Translation error: ' + (err?.message || 'Unknown error'));
       }
     },
-    [activeGlossary, playCaptionAudio]
+    [activeGlossary, floorLanguage, playCaptionAudio, currentSession.meetingIntegration]
   );
 
   // Setup Live Synchronization listener (receives events from other tabs / presenter)
@@ -237,37 +252,54 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
   // Setup Speech Recognition Controller
   useEffect(() => {
-    const controller = createSpeechRecognitionController({
-      onInterimResult: (interim) => {
-        setPartialText(interim);
-        setCurrentSpeaker('Presenter (Live)');
-        broadcastCaptionInterim('Presenter (Live)', interim);
+    const speakerLabel =
+      floorLanguage === 'auto' ? 'Presenter (Live)' : `Presenter (${floorLanguage.toUpperCase()})`;
+
+    const initialLangTag =
+      floorLanguage === 'auto'
+        ? 'en-ZA'
+        : floorLanguage === 'fr'
+        ? 'fr-FR'
+        : floorLanguage === 'pt'
+        ? 'pt-PT'
+        : floorLanguage === 'sw'
+        ? 'sw-KE'
+        : 'en-ZA';
+
+    const controller = createSpeechRecognitionController(
+      {
+        onInterimResult: (interim) => {
+          setPartialText(interim);
+          setCurrentSpeaker(speakerLabel);
+          broadcastCaptionInterim(speakerLabel, interim);
+        },
+        onFinalResult: (finalText) => {
+          handleFinalSpeech(finalText);
+        },
+        onAudioLevel: (level) => {
+          setAudioLevel(level);
+          broadcastMicStatus(true, speakerLabel, level);
+        },
+        onStateChange: (listening) => {
+          setIsPresenterMicLive(listening);
+          if (!listening) {
+            setAudioLevel(0);
+            broadcastMicStatus(false, '', 0);
+          }
+        },
+        onError: (err) => {
+          setMicErrorMessage(err);
+        },
       },
-      onFinalResult: (finalText) => {
-        handleFinalSpeech(finalText);
-      },
-      onAudioLevel: (level) => {
-        setAudioLevel(level);
-        broadcastMicStatus(true, 'Presenter (Live)', level);
-      },
-      onStateChange: (listening) => {
-        setIsPresenterMicLive(listening);
-        if (!listening) {
-          setAudioLevel(0);
-          broadcastMicStatus(false, '', 0);
-        }
-      },
-      onError: (err) => {
-        setMicErrorMessage(err);
-      },
-    });
+      initialLangTag
+    );
 
     speechRecognizerRef.current = controller;
 
     return () => {
       controller.stop();
     };
-  }, [handleFinalSpeech]);
+  }, [floorLanguage, handleFinalSpeech]);
 
   // Fallback simulator: Run demo loop if presenter mic is idle and no live captions exist
   useEffect(() => {
@@ -677,6 +709,62 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                 {micErrorMessage}
               </p>
             )}
+
+            {/* Floor Speaker Language Selector */}
+            <div
+              style={{
+                marginTop: '10px',
+                background: 'rgba(255, 255, 255, 0.04)',
+                borderRadius: '8px',
+                padding: '8px 10px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: 'var(--cream)',
+                  marginBottom: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                }}
+              >
+                <Mic size={12} color="var(--vacfa-red-light)" />
+                Floor Language:
+              </div>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {[
+                  { code: 'auto', label: '⚡ Auto' },
+                  { code: 'en', label: '🇬🇧 EN' },
+                  { code: 'fr', label: '🇫🇷 FR' },
+                  { code: 'pt', label: '🇵🇹 PT' },
+                  { code: 'sw', label: '🇹🇿 SW' },
+                ].map((item) => {
+                  const isSelected = floorLanguage === item.code;
+                  return (
+                    <button
+                      key={item.code}
+                      onClick={() => handleFloorLanguageChange(item.code as any)}
+                      style={{
+                        padding: '4px 7px',
+                        borderRadius: '6px',
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        border: isSelected ? '1px solid var(--vacfa-red)' : '1px solid rgba(255, 255, 255, 0.1)',
+                        background: isSelected ? 'var(--vacfa-red)' : 'rgba(255, 255, 255, 0.04)',
+                        color: isSelected ? 'white' : 'var(--cream)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {/* Audio Waveform (reactive to actual mic volume or simulator) */}

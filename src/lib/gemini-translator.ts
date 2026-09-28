@@ -90,21 +90,83 @@ export function setStoredModel(model: string): void {
 }
 
 /**
- * Detects the probable language of the input text based on common vocabulary patterns.
+ * Detects the probable language of the input text based on frequency analysis and comprehensive lexicon matching.
+ * Accurately differentiates French, Portuguese, Swahili, and English.
  * 
  * @param text The input text string.
+ * @returns Probable language code ('en', 'fr', 'pt', or 'sw')
  */
 export function detectLanguage(text: string): 'en' | 'fr' | 'pt' | 'sw' {
-  const t = ' ' + text.toLowerCase() + ' ';
-  if (/\b(je|j'|le|la|les|nous|vous|pour|avec|dans|est|sont|vaccin|merci|bonjour|comment|salut)\b/.test(t)) {
-    return 'fr';
+  if (!text || !text.trim()) return 'en';
+  const clean = ' ' + text.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"']/g, ' ') + ' ';
+
+  let frScore = 0;
+  let ptScore = 0;
+  let swScore = 0;
+  let enScore = 0;
+
+  // French markers & core vocabulary
+  const frPatterns = [
+    /\b(je|j|tu|il|elle|nous|vous|ils|elles)\b/g,
+    /\b(le|la|les|un|une|des|du|de|d)\b/g,
+    /\b(pour|avec|dans|sur|sous|par|chez|entre|vers)\b/g,
+    /\b(est|sont|sommes|etes|avez|ont|etait|ete|sera|seront|faire|dire|aller)\b/g,
+    /\b(vaccin|vaccins|vaccination|sante|publique|afrique|question|merci|bonjour|bonsoir|salut|monsieur|madame)\b/g,
+    /\b(pourquoi|comment|quand|aussi|tres|bien|notre|votre|leur|cette|ces|cest|ce)\b/g,
+    /\b(reunion|conference|presentation|collegue|collegues|epidemie|paludisme|rougeole)\b/g,
+  ];
+
+  // Portuguese markers & core vocabulary
+  const ptPatterns = [
+    /\b(eu|voce|voces|ele|ela|nos|eles|elas)\b/g,
+    /\b(o|a|os|as|um|uma|uns|umas|do|da|dos|das)\b/g,
+    /\b(para|com|por|sobre|em|no|na|nos|nas)\b/g,
+    /\b(e|sao|foi|foram|esta|estao|estamos|temos|tem|fazer|dizer|ir)\b/g,
+    /\b(vacina|vacinas|vacinacao|saude|publica|africa|pergunta|obrigado|obrigada|ola|bom dia|boa tarde|boa noite|senhor|senhora)\b/g,
+    /\b(porque|como|quando|tambem|muito|bem|nosso|nossa|este|esta|estes|estas|isso|isto|nao)\b/g,
+    /\b(reuniao|conferencia|apresentacao|colega|colegas|surto|malaria|sarampo)\b/g,
+  ];
+
+  // Swahili markers & core vocabulary
+  const swPatterns = [
+    /\b(mimi|wewe|yeye|sisi|nyinyi|wao)\b/g,
+    /\b(wa|ya|cha|vya|za|kwa|katika|na|ni|si|kama|lakini)\b/g,
+    /\b(hapa|pale|huyu|hiki|hawa|hii|hili|yake|yao|yetu|yenu|wote)\b/g,
+    /\b(tuna|mna|wana|nina|tuko|wako|kufanya|kusema|kwenda|kuwa)\b/g,
+    /\b(chanjo|utoaji|afya|umma|afrika|swali|asante|habari|jambo|karibu|karibuni|leo|kesho|jana)\b/g,
+    /\b(kwa nini|vipi|lini|pia|sana|vizuri|daktari|muuguzi|hospitali|dozi|mkutano|uwasilishaji)\b/g,
+  ];
+
+  // English markers
+  const enPatterns = [
+    /\b(the|this|that|these|those)\b/g,
+    /\b(is|are|was|were|have|has|had|will|would|can|could|should)\b/g,
+    /\b(with|from|about|into|through|between|under|over)\b/g,
+    /\b(health|vaccine|vaccines|meeting|conference|presentation|question|thank|welcome|please)\b/g,
+  ];
+
+  for (const p of frPatterns) {
+    const matches = clean.match(p);
+    if (matches) frScore += matches.length;
   }
-  if (/\b(eu|voce|você|para|com|em|não|sao|são|vacina|ola|olá|bom|boa|obrigado|muito)\b/.test(t)) {
-    return 'pt';
+  for (const p of ptPatterns) {
+    const matches = clean.match(p);
+    if (matches) ptScore += matches.length;
   }
-  if (/\b(habari|jina|sasa|kwa|katika|chanjo|wote|yake|asante|karibu|jambo|sana|leo)\b/.test(t)) {
-    return 'sw';
+  for (const p of swPatterns) {
+    const matches = clean.match(p);
+    if (matches) swScore += matches.length;
   }
+  for (const p of enPatterns) {
+    const matches = clean.match(p);
+    if (matches) enScore += matches.length;
+  }
+
+  const max = Math.max(frScore, ptScore, swScore, enScore);
+  if (max === 0) return 'en';
+  if (max === frScore) return 'fr';
+  if (max === ptScore) return 'pt';
+  if (max === swScore) return 'sw';
   return 'en';
 }
 
@@ -169,7 +231,7 @@ export async function translateText(
       const geminiResult = await callGeminiApi(normalized, detectedSource, activeGlossary, apiKey);
       return {
         originalText: normalized,
-        sourceLang: detectedSource,
+        sourceLang: geminiResult.detectedLanguage || detectedSource,
         translations: geminiResult.translations,
         glossaryTerms: Array.from(new Set([...detectedTerms, ...geminiResult.glossaryTerms])),
         provider: 'gemini',
@@ -212,7 +274,7 @@ async function callGeminiApi(
   sourceLang: string,
   glossary: GlossaryTerm[],
   apiKey: string
-): Promise<{ translations: Record<string, string>; glossaryTerms: string[] }> {
+): Promise<{ translations: Record<string, string>; glossaryTerms: string[]; detectedLanguage?: 'en' | 'fr' | 'pt' | 'sw' }> {
   const model = getStoredModel();
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
@@ -237,18 +299,22 @@ async function callGeminiApi(
     .map((g) => `${g.term} -> [FR: ${g.translations.fr || g.term}, PT: ${g.translations.pt || g.term}, SW: ${g.translations.sw || g.term}]`)
     .join('\n');
 
-  const systemInstruction = `You are VACFA Translate, an expert real-time conference interpreter for African public health and vaccine summits.
-Translate the input text into English (en), French (fr), Portuguese (pt), and Swahili (sw).
+  const systemInstruction = `You are VACFA Translate, an expert real-time conference interpreter for African public health summits.
+The speaker may speak in English (en), French (fr), Portuguese (pt), or Swahili (sw).
+1. Detect which language the speaker spoke: 'en', 'fr', 'pt', or 'sw'.
+2. Provide the cleaned, normalized text in the speaker's language.
+3. Provide high-accuracy, fluent, synchronous translations into all the other languages.
 Always preserve and strictly apply these approved Medical Glossary terms:
 ${glossarySnippet}
 
 Respond ONLY with valid JSON matching this schema:
 {
+  "detectedLanguage": "en|fr|pt|sw",
   "translations": {
-    "en": "English translation",
-    "fr": "French translation",
-    "pt": "Portuguese translation",
-    "sw": "Swahili translation"
+    "en": "English text (spoken or translated)",
+    "fr": "French text (spoken or translated)",
+    "pt": "Portuguese text (spoken or translated)",
+    "sw": "Swahili text (spoken or translated)"
   },
   "detectedGlossaryTerms": ["exact term name that appeared in text"]
 }`;
@@ -262,7 +328,7 @@ Respond ONLY with valid JSON matching this schema:
       contents: [
         {
           role: 'user',
-          parts: [{ text: `Source text (${sourceLang}): "${text}"` }],
+          parts: [{ text: `Input speech from conference: "${text}" (Floor hint: ${sourceLang})` }],
         },
       ],
       systemInstruction: {
@@ -286,12 +352,15 @@ Respond ONLY with valid JSON matching this schema:
   }
 
   const parsed = JSON.parse(rawText);
+  const detected = (parsed.detectedLanguage as 'en' | 'fr' | 'pt' | 'sw') || (sourceLang as 'en' | 'fr' | 'pt' | 'sw');
+
   return {
+    detectedLanguage: detected,
     translations: {
-      en: parsed.translations?.en || text,
-      fr: parsed.translations?.fr || text,
-      pt: parsed.translations?.pt || text,
-      sw: parsed.translations?.sw || text,
+      en: parsed.translations?.en || (detected === 'en' ? text : ''),
+      fr: parsed.translations?.fr || (detected === 'fr' ? text : ''),
+      pt: parsed.translations?.pt || (detected === 'pt' ? text : ''),
+      sw: parsed.translations?.sw || (detected === 'sw' ? text : ''),
     },
     glossaryTerms: parsed.detectedGlossaryTerms || [],
   };

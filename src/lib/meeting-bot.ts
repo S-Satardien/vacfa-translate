@@ -30,6 +30,8 @@ export interface MeetingBotController {
   stopSimulatedRelay: () => void;
   getStatus: () => MeetingBotStatus;
   getChannels: () => InterpretationChannelStatus[];
+  setFloorLanguage: (lang: string) => void;
+  getFloorLanguage: () => string;
 }
 
 /** Realistic sample sentences spoken in African immunization and vaccine economics meetings */
@@ -56,10 +58,13 @@ export function createMeetingBotController(
   let status: MeetingBotStatus = session.meetingIntegration?.botStatus || 'idle';
   let audioContext: AudioContext | null = null;
   let mediaStream: MediaStream | null = null;
+  let micStream: MediaStream | null = null;
+  let mixerCtx: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
   let animFrameId: number | null = null;
   let simTimer: NodeJS.Timeout | null = null;
   let recognizer: ReturnType<typeof createSpeechRecognitionController> | null = null;
+  let floorLanguage: string = session.meetingIntegration?.sourceLanguage || 'auto';
 
   // Initialize channels based on session languages
   const targetLangs = session.languages.filter((l) => l.code !== 'en');
@@ -183,9 +188,32 @@ export function createMeetingBotController(
         }
 
         mediaStream = stream;
-        setStatus('streaming', 'Live meeting audio stream connected at 48kHz.');
 
-        startVolumeAnalysis(stream);
+        // Mix remote meeting speakers (tab audio) + local presenter mic into unified multi-speaker bridge
+        let activeAudioStream: MediaStream = stream;
+        try {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          mixerCtx = new AudioCtx();
+          const destination = mixerCtx.createMediaStreamDestination();
+
+          const tabSource = mixerCtx.createMediaStreamSource(stream);
+          tabSource.connect(destination);
+
+          try {
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            const micSource = mixerCtx.createMediaStreamSource(micStream);
+            micSource.connect(destination);
+          } catch {
+            // Local mic optional; remote meeting tab audio proceeds uninterrupted
+          }
+
+          activeAudioStream = destination.stream;
+        } catch {
+          activeAudioStream = stream;
+        }
+
+        setStatus('streaming', 'Live multi-speaker bridge active (Meeting audio + Presenter mic).');
+        startVolumeAnalysis(activeAudioStream);
 
         // Handle user stopping share via browser banner
         audioTracks[0].onended = () => {
@@ -193,62 +221,86 @@ export function createMeetingBotController(
           setStatus('connected', 'Meeting audio share stopped by user.');
         };
 
-        // Connect speech recognition to ingest talk
-        recognizer = createSpeechRecognitionController({
-          onInterimResult: (interim) => {
-            broadcastCaptionInterim('Meeting Speaker', interim);
-          },
-          onFinalResult: async (finalText) => {
-            if (!finalText.trim()) return;
+        const initialLangTag =
+          floorLanguage === 'auto'
+            ? 'en-ZA'
+            : floorLanguage === 'fr'
+            ? 'fr-FR'
+            : floorLanguage === 'pt'
+            ? 'pt-PT'
+            : floorLanguage === 'sw'
+            ? 'sw-KE'
+            : 'en-ZA';
 
-            const captionId = `meeting-cap-${Date.now()}`;
-            const initialEntry: CaptionEntry = {
-              id: captionId,
-              speaker: 'Meeting Speaker',
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-              originalText: finalText,
-              translations: {
-                en: finalText,
-                fr: '...',
-                pt: '...',
-                sw: '...',
-              },
-              glossaryTerms: [],
-            };
+        // Connect speech recognition to ingest multi-speaker talk
+        recognizer = createSpeechRecognitionController(
+          {
+            onInterimResult: (interim) => {
+              const speakerLabel =
+                floorLanguage === 'auto' ? 'Meeting Speaker' : `Meeting Speaker (${floorLanguage.toUpperCase()})`;
+              broadcastCaptionInterim(speakerLabel, interim);
+            },
+            onFinalResult: async (finalText) => {
+              if (!finalText.trim()) return;
 
-            const glossary = getActiveSessionGlossary();
-            const res = await translateText(finalText, undefined, glossary);
+              const captionId = `meeting-cap-${Date.now()}`;
+              const initialEntry: CaptionEntry = {
+                id: captionId,
+                speaker: 'Meeting Speaker',
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                originalText: finalText,
+                translations: {
+                  en: finalText,
+                  fr: '...',
+                  pt: '...',
+                  sw: '...',
+                },
+                glossaryTerms: [],
+              };
 
-            const finalEntry: CaptionEntry = {
-              ...initialEntry,
-              translations: res.translations,
-              glossaryTerms: res.glossaryTerms,
-            };
+              const glossary = getActiveSessionGlossary();
+              const res = await translateText(
+                finalText,
+                floorLanguage === 'auto' ? undefined : floorLanguage,
+                glossary
+              );
 
-            broadcastCaptionFinal(finalEntry);
+              const detectedLangCode = res.sourceLang || 'en';
+              const speakerLabel = `Meeting Speaker (${detectedLangCode.toUpperCase()})`;
 
-            // Stream to Microsoft Teams CART API if configured
-            if (session.meetingIntegration?.teamsCartUrl) {
-              const cartLang = session.meetingIntegration.teamsCartLanguage || 'fr';
-              const translated = finalEntry.translations?.[cartLang];
-              const isValid =
-                cartLang === 'en'
-                  ? Boolean(finalEntry.originalText?.trim())
-                  : Boolean(translated && translated !== '...' && translated.trim());
+              const finalEntry: CaptionEntry = {
+                ...initialEntry,
+                speaker: speakerLabel,
+                translations: res.translations,
+                glossaryTerms: res.glossaryTerms,
+              };
 
-              if (isValid) {
-                const cartText = cartLang === 'en' ? finalEntry.originalText : translated!;
-                sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
-                  speaker: `VACFA (${cartLang.toUpperCase()})`,
-                }).catch(() => {});
+              broadcastCaptionFinal(finalEntry);
+
+              // Stream to Microsoft Teams CART API if configured
+              if (session.meetingIntegration?.teamsCartUrl) {
+                const cartLang = session.meetingIntegration.teamsCartLanguage || 'fr';
+                const translated = finalEntry.translations?.[cartLang];
+                const isValid =
+                  cartLang === 'en'
+                    ? Boolean(finalEntry.originalText?.trim())
+                    : Boolean(translated && translated !== '...' && translated.trim());
+
+                if (isValid) {
+                  const cartText = cartLang === 'en' ? finalEntry.originalText : translated!;
+                  sendTeamsCartCaption(session.meetingIntegration.teamsCartUrl, cartText, {
+                    speaker: `VACFA (${cartLang.toUpperCase()})`,
+                  }).catch(() => {});
+                }
               }
-            }
+            },
+            onAudioLevel: () => {},
+            onError: (err) => {
+              callbacks.onError?.(err);
+            },
           },
-          onAudioLevel: () => {},
-          onError: (err) => {
-            callbacks.onError?.(err);
-          },
-        });
+          initialLangTag
+        );
 
         await recognizer.start();
       } catch (err: any) {
@@ -270,8 +322,16 @@ export function createMeetingBotController(
         mediaStream.getTracks().forEach((t) => t.stop());
         mediaStream = null;
       }
+      if (micStream) {
+        micStream.getTracks().forEach((t) => t.stop());
+        micStream = null;
+      }
+      if (mixerCtx && mixerCtx.state !== 'closed') {
+        mixerCtx.close().catch(() => {});
+        mixerCtx = null;
+      }
       if (audioContext && audioContext.state !== 'closed') {
-        audioContext.close();
+        audioContext.close().catch(() => {});
         audioContext = null;
       }
       analyser = null;
@@ -386,6 +446,17 @@ export function createMeetingBotController(
 
     getChannels(): InterpretationChannelStatus[] {
       return channels;
+    },
+
+    setFloorLanguage(lang: string): void {
+      floorLanguage = lang;
+      if (recognizer) {
+        recognizer.setLanguage(lang === 'auto' ? 'en' : lang);
+      }
+    },
+
+    getFloorLanguage(): string {
+      return floorLanguage;
     },
   };
 }

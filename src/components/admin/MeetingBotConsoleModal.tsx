@@ -44,6 +44,7 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [monitoringLang, setMonitoringLang] = useState<string | null>(null);
+  const [floorLanguage, setFloorLanguage] = useState<'auto' | 'en' | 'fr' | 'pt' | 'sw'>('auto');
 
   // In-Meeting Tabs and Teams CART Integration State
   const [activeTab, setActiveTab] = useState<'channels' | 'cart' | 'teams_app'>('channels');
@@ -239,6 +240,11 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
     setTimeout(() => setCopiedFrLink(false), 2000);
   };
 
+  const handleFloorLanguageChange = (lang: 'auto' | 'en' | 'fr' | 'pt' | 'sw') => {
+    setFloorLanguage(lang);
+    controllerRef.current?.setFloorLanguage(lang);
+  };
+
   const handleMonitorChannel = (langCode: string) => {
     if (monitoringLang === langCode) {
       setMonitoringLang(null);
@@ -418,6 +424,62 @@ export const MeetingBotConsoleModal: React.FC<MeetingBotConsoleModalProps> = ({
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--grey-400)' }}>
                 Or click <strong>Listen In</strong> on any channel below to monitor audio directly in this console.
+              </div>
+            </div>
+
+            {/* Floor Speaker Language Selector */}
+            <div
+              style={{
+                background: 'rgba(26, 26, 26, 0.75)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '12px',
+                padding: '12px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '10px',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--white)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Mic size={15} color="var(--vacfa-red-light)" />
+                  Floor Speaker Language (Who is Talking?):
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--grey-400)' }}>
+                  If a delegate takes the floor in French, Portuguese, or Swahili, tap their language to switch acoustic models, or leave on Auto-Detect.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {[
+                  { code: 'auto', label: '⚡ Auto-Detect' },
+                  { code: 'en', label: '🇬🇧 English' },
+                  { code: 'fr', label: '🇫🇷 French' },
+                  { code: 'pt', label: '🇵🇹 Portuguese' },
+                  { code: 'sw', label: '🇹🇿 Swahili' },
+                ].map((item) => {
+                  const isSelected = floorLanguage === item.code;
+                  return (
+                    <button
+                      key={item.code}
+                      onClick={() => handleFloorLanguageChange(item.code as any)}
+                      style={{
+                        padding: '5px 11px',
+                        borderRadius: '8px',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
+                        border: isSelected ? '1px solid var(--vacfa-red)' : '1px solid rgba(255, 255, 255, 0.1)',
+                        background: isSelected ? 'var(--vacfa-red)' : 'rgba(255, 255, 255, 0.04)',
+                        color: isSelected ? 'white' : 'var(--cream)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

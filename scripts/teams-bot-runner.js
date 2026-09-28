@@ -46,8 +46,11 @@ function loadEnvLocal() {
 }
 loadEnvLocal();
 
-const MEETING_URL = process.argv[2] || process.env.TEAMS_MEETING_URL;
-const CART_URL = process.argv[3] || process.env.TEAMS_CART_URL;
+const DEFAULT_TEST2_MEETING_URL = 'https://teams.microsoft.com/meet/35898491838902?p=t69Kw3xIC3m9il84Z2';
+const DEFAULT_TEST2_CART_URL = 'https://api.captions.office.microsoft.com/cartcaption?meetingid=%7b%22tId%22%3a%2292454335-564e-4ccf-b0b0-24445b8c03f7%22%2c%22oId%22%3a%224ddd5689-9ad7-4554-97c8-a3cc026a86c8%22%2c%22thId%22%3a%2219%3ameeting_NTNlNjcwYmYtNGYyNi00MjQ4LTkzNTYtZDRmNThhNTVlMTI0%40thread.v2%22%2c%22mId%22%3a%220%22%7d&token=drnt33k';
+
+const MEETING_URL = process.argv[2] || process.env.TEAMS_MEETING_URL || DEFAULT_TEST2_MEETING_URL;
+const CART_URL = process.argv[3] || process.env.TEAMS_CART_URL || DEFAULT_TEST2_CART_URL;
 const BOT_NAME = process.env.BOT_NAME || 'VACFA AI Interpreter';
 const BOT_EMAIL = process.env.BOT_EMAIL || 'bot@vacfa-translate.org';
 const DEBUG_PORT = process.env.DEBUG_PORT || 9222;
@@ -55,26 +58,6 @@ const RELAY_PORT = 9876;
 const SESSION_URL = process.argv[4] || process.env.SESSION_URL || 'https://s-satardien.github.io/vacfa-translate/live/session-008';
 const JOIN_CODE = process.argv[5] || process.env.JOIN_CODE || '736532';
 const CHAT_ANNOUNCEMENT = `🌐 VACFA AI Live Interpretation is active for this meeting! 🎧 Listen in French, Portuguese, or Swahili: ${SESSION_URL} (or join via code ${JOIN_CODE} at https://s-satardien.github.io/vacfa-translate/join)`;
-
-if (!MEETING_URL) {
-  console.log(`
-=============================================================================
-  VACFA Translate — Teams Headless Attendee Bot
-=============================================================================
-  Usage:
-    node scripts/teams-bot-runner.js "<TEAMS_MEETING_URL>" ["<CART_URL>"] ["<SESSION_URL>"] ["<JOIN_CODE>"]
-
-  Environment Variables:
-    TEAMS_MEETING_URL : Teams invitation link (https://teams.microsoft.com/meet/...)
-    TEAMS_CART_URL    : Microsoft Teams CART caption ingestion URL
-    BOT_NAME          : Display name inside Teams (Default: VACFA AI Interpreter)
-    BOT_EMAIL         : Bot email identifier (Default: bot@vacfa-translate.org)
-    SESSION_URL       : Attendee listener URL for live audio translation
-    JOIN_CODE         : 6-digit session pin code
-=============================================================================
-  `);
-  process.exit(1);
-}
 
 console.log(`=============================================================================`);
 console.log(`  VACFA Translate — Virtual Attendee Bot`);
@@ -88,9 +71,10 @@ if (CART_URL) {
 console.log(`-----------------------------------------------------------------------------`);
 
 // ============================================================================
-// 1. Local SSE / HTTP Relay Server (Streams speech to VACFA Live Session App)
+// 1. Local WebSocket & SSE Relay Server (Streams speech to VACFA Live Session App)
 // ============================================================================
 const sseClients = new Set();
+let wss = null;
 
 const relayServer = http.createServer((req, res) => {
   // Allow cross-origin requests from GitHub Pages or localhost
@@ -133,8 +117,21 @@ const relayServer = http.createServer((req, res) => {
 });
 
 relayServer.listen(RELAY_PORT, '127.0.0.1', () => {
-  console.log(`[VACFA Relay] Stream Server active on http://127.0.0.1:${RELAY_PORT}/events`);
+  console.log(`[VACFA Relay] Stream Server active on:`);
+  console.log(`  - WebSocket : ws://127.0.0.1:${RELAY_PORT}`);
+  console.log(`  - SSE Event : http://127.0.0.1:${RELAY_PORT}/events`);
 });
+
+try {
+  const { WebSocketServer } = require('ws');
+  wss = new WebSocketServer({ server: relayServer });
+  wss.on('connection', (client) => {
+    console.log(`[VACFA Relay] Live session web app connected via WebSocket! (Total listeners: ${wss.clients.size})`);
+    client.send(JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME, meetingUrl: MEETING_URL, sessionUrl: SESSION_URL }));
+  });
+} catch (wsErr) {
+  console.log('[VACFA Relay] Notice: Running in HTTP SSE mode.');
+}
 
 // Periodic heartbeat every 15s to keep connections alive
 setInterval(() => {
@@ -148,10 +145,24 @@ setInterval(() => {
 }, 15000);
 
 function broadcastToClients(data) {
-  const payload = `data: ${JSON.stringify(data)}\n\n`;
+  const rawJson = JSON.stringify(data);
+
+  // Send to all connected WebSocket clients (GitHub Pages / web app)
+  if (wss) {
+    for (const client of wss.clients) {
+      if (client.readyState === 1 /* OPEN */) {
+        try {
+          client.send(rawJson);
+        } catch {}
+      }
+    }
+  }
+
+  // Send to all connected Server-Sent Events clients
+  const ssePayload = `data: ${rawJson}\n\n`;
   for (const client of sseClients) {
     try {
-      client.write(payload);
+      client.write(ssePayload);
     } catch {
       sseClients.delete(client);
     }

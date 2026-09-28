@@ -251,64 +251,102 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     return () => unsubscribe();
   }, [isPresenterMicLive, playCaptionAudio]);
 
-  // Microsoft Teams Bot Ingestion Relay Bridge (Port 9876)
+  // Microsoft Teams Bot Ingestion Relay Bridge (Port 9876: WebSocket + SSE)
   const [isBotRelayConnected, setIsBotRelayConnected] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    let ws: WebSocket | null = null;
     let eventSource: EventSource | null = null;
     let reconnectTimeout: any = null;
+    let isConnected = false;
 
-    function connectBotBridge() {
+    function handlePayload(data: any) {
+      if (data.type === 'caption') {
+        const cap: CaptionEntry = data.caption;
+        setCaptions((prev) => {
+          const isDup = prev.slice(-4).some(
+            (c) => c.originalText.trim().toLowerCase() === cap.originalText.trim().toLowerCase()
+          );
+          if (isDup) return prev;
+          return [...prev, cap];
+        });
+        setPartialText('');
+        setCurrentSpeaker(cap.speaker);
+        playCaptionAudio(cap);
+      } else if (data.type === 'interim') {
+        setCurrentSpeaker(data.speaker || 'Teams Speaker');
+        setPartialText(data.text);
+      } else if (data.type === 'bot_status') {
+        setIsBotRelayConnected(Boolean(data.connected));
+      }
+    }
+
+    function tryWebSocket() {
+      try {
+        ws = new WebSocket('ws://127.0.0.1:9876');
+
+        ws.onopen = () => {
+          isConnected = true;
+          setIsBotRelayConnected(true);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handlePayload(data);
+          } catch {}
+        };
+
+        ws.onerror = () => {
+          if (!isConnected) {
+            tryEventSource();
+          }
+        };
+
+        ws.onclose = () => {
+          isConnected = false;
+          setIsBotRelayConnected(false);
+          reconnectTimeout = setTimeout(tryWebSocket, 3000);
+        };
+      } catch {
+        tryEventSource();
+      }
+    }
+
+    function tryEventSource() {
       try {
         eventSource = new EventSource('http://127.0.0.1:9876/events');
 
         eventSource.onopen = () => {
+          isConnected = true;
           setIsBotRelayConnected(true);
         };
 
         eventSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'caption') {
-              const cap: CaptionEntry = data.caption;
-              setCaptions((prev) => {
-                // Avoid rendering exact duplicate caption if already received within last 4 items
-                const isDup = prev.slice(-4).some(
-                  (c) => c.originalText.trim().toLowerCase() === cap.originalText.trim().toLowerCase()
-                );
-                if (isDup) return prev;
-                return [...prev, cap];
-              });
-              setPartialText('');
-              setCurrentSpeaker(cap.speaker);
-              playCaptionAudio(cap);
-            } else if (data.type === 'interim') {
-              setCurrentSpeaker(data.speaker || 'Teams Speaker');
-              setPartialText(data.text);
-            } else if (data.type === 'bot_status') {
-              setIsBotRelayConnected(Boolean(data.connected));
-            }
+            handlePayload(data);
           } catch {}
         };
 
         eventSource.onerror = () => {
+          isConnected = false;
           setIsBotRelayConnected(false);
           eventSource?.close();
-          reconnectTimeout = setTimeout(connectBotBridge, 3000);
         };
       } catch {
         setIsBotRelayConnected(false);
-        reconnectTimeout = setTimeout(connectBotBridge, 3000);
       }
     }
 
-    connectBotBridge();
+    tryWebSocket();
 
     return () => {
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      eventSource?.close();
+      if (ws) ws.close();
+      if (eventSource) eventSource.close();
     };
   }, [playCaptionAudio]);
 

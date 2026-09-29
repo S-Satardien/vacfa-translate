@@ -181,13 +181,13 @@ async function transcribeAndTranslateAudio(base64Audio) {
   const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) { console.error('[Gemini] No API key'); return null; }
 
-  const models = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
+  const candidateModels = [
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.8-flash',
+    'gemini-3.8-flash',
+    'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
-  for (const model of models) {
+  for (const model of candidateModels) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const ctrl = new AbortController();
@@ -239,13 +239,13 @@ async function translateText(text, speaker = 'Participant') {
   const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) return fallbackTranslate(text);
 
-  const models = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
+  const candidateModels = [
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.8-flash',
+    'gemini-3.8-flash',
+    'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
-  for (const model of models) {
+  for (const model of candidateModels) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const ctrl = new AbortController();
@@ -349,11 +349,12 @@ function findBrowser() {
 // ============================================================================
 
 /**
- * Script A — WebRTC Audio Interceptor
+ * Script A — WebRTC Audio Interceptor (Continuous Central Mixer)
  *
- * Monkey-patches RTCPeerConnection and HTMLMediaElement.srcObject.
- * Captures the mixed remote audio stream via MediaRecorder and sends
- * 3.5-second WebM/Opus chunks to the host via Runtime.addBinding('vacfaAudioChunk').
+ * Maintains a persistent Web Audio destination & recorder loop.
+ * Every incoming audio track from RTCPeerConnection and HTMLMediaElement.srcObject
+ * is dynamically plugged into the mixer, so track renegotiations never interrupt capture.
+ * Chunks (3.5s) are transmitted via Runtime.addBinding('vacfaAudioChunk').
  */
 const AUDIO_INTERCEPTOR_SCRIPT = `
 (function(){
@@ -361,21 +362,136 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
   window.__VACFA_RTC_HOOKED__=true;
 
   const LOG='[VACFA Audio]';
-  let captureActive=false;
   const seenTracks=new Set();
+
+  let audioCtx=null;
+  let mixerDest=null;
+  let analyser=null;
+  let recorder=null;
+  let currentSegmentChunks=[];
+  let maxVolumeInSegment=0;
+
+  function initMixer(){
+    if(audioCtx)return;
+    try{
+      audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+      audioCtx.resume().catch(()=>{});
+
+      mixerDest=audioCtx.createMediaStreamDestination();
+      analyser=audioCtx.createAnalyser();
+      analyser.fftSize=1024;
+
+      const buf=new Uint8Array(analyser.frequencyBinCount);
+      setInterval(()=>{
+        analyser.getByteTimeDomainData(buf);
+        let peak=0;
+        for(let i=0;i<buf.length;i++){
+          const diff=Math.abs(buf[i]-128);
+          if(diff>peak)peak=diff;
+        }
+        if(peak>maxVolumeInSegment)maxVolumeInSegment=peak;
+      },60);
+
+      startRecordingLoop();
+      console.log(LOG,'Persistent audio mixer initialized.');
+    }catch(e){console.error(LOG,'Init mixer failed',e);}
+  }
+
+  function startRecordingLoop(){
+    if(!mixerDest||!mixerDest.stream)return;
+
+    function runSlice(){
+      maxVolumeInSegment=0;
+      currentSegmentChunks=[];
+
+      try{
+        recorder=new MediaRecorder(mixerDest.stream,{mimeType:'audio/webm;codecs=opus'});
+      }catch(err){
+        console.error(LOG,'MediaRecorder creation failed, retrying in 2s',err);
+        setTimeout(runSlice,2000);
+        return;
+      }
+
+      recorder.ondataavailable=(e)=>{
+        if(e.data&&e.data.size>0)currentSegmentChunks.push(e.data);
+      };
+
+      recorder.onstop=async()=>{
+        const chunks=currentSegmentChunks;
+        const volume=maxVolumeInSegment;
+
+        setTimeout(runSlice,30);
+
+        if(chunks.length>0&&volume>=2){
+          try{
+            const blob=new Blob(chunks,{type:'audio/webm'});
+            if(blob.size>800){
+              const buf=await blob.arrayBuffer();
+              const bytes=new Uint8Array(buf);
+              let binary='';
+              const CHUNK=8192;
+              for(let i=0;i<bytes.length;i+=CHUNK){
+                binary+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(i+CHUNK,bytes.length)));
+              }
+              const b64=btoa(binary);
+              if(window.vacfaAudioChunk){
+                console.log(LOG,'Transmitting audio chunk (vol: '+volume+', size: '+Math.round(blob.size/1024)+'KB)');
+                window.vacfaAudioChunk(b64);
+              }
+            }
+          }catch(encodeErr){console.error(LOG,'Encode error',encodeErr);}
+        }
+      };
+
+      recorder.onerror=()=>{
+        setTimeout(runSlice,1000);
+      };
+
+      recorder.start();
+      setTimeout(()=>{
+        if(recorder&&recorder.state==='recording'){
+          try{recorder.stop();}catch(e){}
+        }
+      },3500);
+    }
+
+    runSlice();
+  }
+
+  function connectTrackToMixer(track,sourceLabel){
+    if(!track||track.kind!=='audio')return;
+    if(seenTracks.has(track.id))return;
+    seenTracks.add(track.id);
+
+    initMixer();
+    if(!audioCtx)return;
+
+    try{
+      console.log(LOG,'Connecting remote audio track ('+sourceLabel+'):',track.id);
+      const stream=new MediaStream([track]);
+      const sourceNode=audioCtx.createMediaStreamSource(stream);
+
+      sourceNode.connect(mixerDest);
+      sourceNode.connect(analyser);
+      sourceNode.connect(audioCtx.destination);
+
+      track.addEventListener('ended',()=>{
+        console.log(LOG,'Audio track ended:',track.id);
+        try{sourceNode.disconnect();}catch(e){}
+        seenTracks.delete(track.id);
+      });
+    }catch(e){console.warn(LOG,'Failed to connect track',track.id,e);}
+  }
 
   /* ---- Hook RTCPeerConnection ---- */
   const OrigPC=window.RTCPeerConnection;
   if(OrigPC){
-    window.RTCPeerConnection=function(...a){
-      const pc=new OrigPC(...a);
+    window.RTCPeerConnection=function(...args){
+      const pc=new OrigPC(...args);
       pc.addEventListener('track',(ev)=>{
-        if(ev.track.kind!=='audio')return;
-        if(seenTracks.has(ev.track.id))return;
-        seenTracks.add(ev.track.id);
-        console.log(LOG,'Got remote audio track',ev.track.id);
-        const stream=ev.streams[0]||new MediaStream([ev.track]);
-        if(!captureActive){ captureActive=true; startCapture(stream); }
+        if(ev.track&&ev.track.kind==='audio'){
+          connectTrackToMixer(ev.track,'RTCPeerConnection');
+        }
       });
       return pc;
     };
@@ -388,111 +504,18 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
     const desc=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'srcObject');
     if(desc){
       Object.defineProperty(HTMLMediaElement.prototype,'srcObject',{
-        set(s){
-          if(s instanceof MediaStream){
-            for(const t of s.getAudioTracks()){
-              if(!seenTracks.has(t.id)){
-                seenTracks.add(t.id);
-                console.log(LOG,'Got media element audio track',t.id);
-                if(!captureActive){ captureActive=true; startCapture(s); }
-              }
+        set(stream){
+          if(stream instanceof MediaStream){
+            for(const t of stream.getAudioTracks()){
+              connectTrackToMixer(t,'HTMLMediaElement.srcObject');
             }
           }
-          return desc.set.call(this,s);
+          return desc.set.call(this,stream);
         },
         get(){return desc.get.call(this);}
       });
     }
   }catch(e){console.warn(LOG,'srcObject hook failed',e);}
-
-  /* ---- Audio capture pipeline ---- */
-  function startCapture(stream){
-    console.log(LOG,'Starting audio capture pipeline');
-    const ctx=new AudioContext({sampleRate:48000});
-    ctx.resume().catch(()=>{});
-
-    const src=ctx.createMediaStreamSource(stream);
-
-    /* Voice Activity Detector via AnalyserNode */
-    const analyser=ctx.createAnalyser();
-    analyser.fftSize=2048;
-    src.connect(analyser);
-
-    /* Keep audio audible in the tab (don't mute the meeting) */
-    src.connect(ctx.destination);
-
-    let peakLevel=0;
-    const vadBuf=new Uint8Array(analyser.frequencyBinCount);
-    setInterval(()=>{
-      analyser.getByteTimeDomainData(vadBuf);
-      let mx=0;
-      for(let i=0;i<vadBuf.length;i++){const v=Math.abs(vadBuf[i]-128);if(v>mx)mx=v;}
-      peakLevel=mx;
-    },80);
-
-    /* MediaRecorder loop: 3.5s segments */
-    const SEGMENT_MS=3500;
-    function recordSegment(){
-      if(!stream.active){console.warn(LOG,'Stream no longer active');return;}
-      let voiceDetected=false;
-      const vad=setInterval(()=>{if(peakLevel>4)voiceDetected=true;},80);
-
-      let recorder;
-      try{
-        const recStream=new MediaStream(stream.getAudioTracks());
-        recorder=new MediaRecorder(recStream,{mimeType:'audio/webm;codecs=opus'});
-      }catch(e){
-        console.error(LOG,'MediaRecorder init failed',e);
-        clearInterval(vad);
-        setTimeout(recordSegment,2000);
-        return;
-      }
-
-      const chunks=[];
-      recorder.ondataavailable=(e)=>{if(e.data.size>0)chunks.push(e.data);};
-
-      recorder.onstop=async()=>{
-        clearInterval(vad);
-        if(voiceDetected&&chunks.length>0){
-          try{
-            const blob=new Blob(chunks,{type:'audio/webm'});
-            if(blob.size>500){
-              const buf=await blob.arrayBuffer();
-              const bytes=new Uint8Array(buf);
-              let binary='';
-              const SZ=8192;
-              for(let i=0;i<bytes.length;i+=SZ){
-                binary+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(i+SZ,bytes.length)));
-              }
-              const b64=btoa(binary);
-              if(window.vacfaAudioChunk){
-                window.vacfaAudioChunk(b64);
-              }
-            }
-          }catch(e){console.error(LOG,'Chunk encode error',e);}
-        }
-        setTimeout(recordSegment,50);
-      };
-
-      recorder.onerror=(e)=>{
-        console.error(LOG,'MediaRecorder error',e);
-        clearInterval(vad);
-        setTimeout(recordSegment,1000);
-      };
-
-      recorder.start();
-      setTimeout(()=>{
-        if(recorder.state==='recording')recorder.stop();
-      },SEGMENT_MS);
-    }
-
-    /* Wait for AudioContext to be running */
-    function waitAndStart(){
-      if(ctx.state==='running'){recordSegment();}
-      else{ctx.resume().then(()=>recordSegment()).catch(()=>setTimeout(waitAndStart,500));}
-    }
-    setTimeout(waitAndStart,2000);
-  }
 })();
 `;
 
@@ -552,7 +575,7 @@ const PRE_JOIN_SCRIPT = `
       handlePreJoin();
       if(checkInMeeting()){
         joinedMeeting=true;
-        console.log('[VACFA Bot] Inside meeting — audio capture active');
+        console.log('[VACFA Bot] Inside meeting — audio mixer active');
         enableCaptions();
         setTimeout(postChatAnnouncement,6000);
       }
@@ -608,6 +631,7 @@ const PRE_JOIN_SCRIPT = `
  * Script C — Enhanced Caption Observer (fallback if RTC audio capture fails)
  *
  * Watches for Teams Live Captions DOM nodes across main document AND iframes.
+ * Ignores accessibility notifications (e.g. "Microphone is off", "joined the call").
  * Uses Runtime.addBinding('vacfaSpeechData') for reliable IPC.
  */
 const CAPTION_OBSERVER_SCRIPT = `
@@ -619,10 +643,23 @@ const CAPTION_OBSERVER_SCRIPT = `
   let lastText='';
   let lastTime=0;
 
+  const SYSTEM_IGNORE_PATTERNS=[
+    /microphone is (off|on|muted)/i,
+    /camera is (off|on)/i,
+    /joined the call/i,
+    /left the call/i,
+    /waiting in the lobby/i,
+    /people in the meeting know you/i,
+    /you are muted/i,
+    /ctrl\\+shift\\+m/i,
+    /press .* to speak/i,
+  ];
+
   function sendCaption(speaker,text){
     const now=Date.now();
     const clean=text.trim();
     if(!clean||clean.length<3)return;
+    if(SYSTEM_IGNORE_PATTERNS.some(p=>p.test(clean)))return;
     if(clean===lastText&&now-lastTime<4000)return;
     lastText=clean; lastTime=now;
     if(window.vacfaSpeechData){
@@ -630,7 +667,6 @@ const CAPTION_OBSERVER_SCRIPT = `
     }
   }
 
-  /* Broad selector set for captions */
   const CAPTION_SELECTORS=[
     '[data-tid*="caption"]',
     '[class*="caption"]',

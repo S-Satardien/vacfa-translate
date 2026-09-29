@@ -18,16 +18,16 @@ import type {
 
 /** Supported languages in the VACFA Translate platform */
 export const LANGUAGES: Language[] = [
-  { code: 'en', name: 'English', nativeName: 'English', listenerCount: 124 },
-  { code: 'fr', name: 'French', nativeName: 'Français', listenerCount: 89 },
-  { code: 'pt', name: 'Portuguese', nativeName: 'Português', listenerCount: 47 },
-  { code: 'sw', name: 'Swahili', nativeName: 'Kiswahili', listenerCount: 63 },
-  { code: 'yo', name: 'Yoruba', nativeName: 'Yorùbá', listenerCount: 31 },
-  { code: 'zu', name: 'Zulu', nativeName: 'isiZulu', listenerCount: 22 },
-  { code: 'am', name: 'Amharic', nativeName: 'አማርኛ', listenerCount: 18 },
-  { code: 'ha', name: 'Hausa', nativeName: 'Hausa', listenerCount: 27 },
-  { code: 'wo', name: 'Wolof', nativeName: 'Wolof', listenerCount: 14 },
-  { code: 'ln', name: 'Lingala', nativeName: 'Lingála', listenerCount: 11 },
+  { code: 'en', name: 'English', nativeName: 'English', listenerCount: 0 },
+  { code: 'fr', name: 'French', nativeName: 'Français', listenerCount: 0 },
+  { code: 'pt', name: 'Portuguese', nativeName: 'Português', listenerCount: 0 },
+  { code: 'sw', name: 'Swahili', nativeName: 'Kiswahili', listenerCount: 0 },
+  { code: 'yo', name: 'Yoruba', nativeName: 'Yorùbá', listenerCount: 0 },
+  { code: 'zu', name: 'Zulu', nativeName: 'isiZulu', listenerCount: 0 },
+  { code: 'am', name: 'Amharic', nativeName: 'አማርኛ', listenerCount: 0 },
+  { code: 'ha', name: 'Hausa', nativeName: 'Hausa', listenerCount: 0 },
+  { code: 'wo', name: 'Wolof', nativeName: 'Wolof', listenerCount: 0 },
+  { code: 'ln', name: 'Lingala', nativeName: 'Lingála', listenerCount: 0 },
 ];
 
 /** Mock sessions for the dashboard */
@@ -648,13 +648,13 @@ export const DEMO_CAPTIONS: CaptionEntry[] = [
 
 /** Active translation channels for the live session view */
 export const TRANSLATION_CHANNELS: TranslationChannel[] = [
-  { language: LANGUAGES[0], listenerCount: 124, health: 'healthy', latencyMs: 145 },
-  { language: LANGUAGES[1], listenerCount: 89, health: 'healthy', latencyMs: 180 },
-  { language: LANGUAGES[2], listenerCount: 47, health: 'healthy', latencyMs: 210 },
-  { language: LANGUAGES[3], listenerCount: 63, health: 'degraded', latencyMs: 450 },
-  { language: LANGUAGES[4], listenerCount: 31, health: 'healthy', latencyMs: 195 },
-  { language: LANGUAGES[6], listenerCount: 18, health: 'healthy', latencyMs: 220 },
-  { language: LANGUAGES[7], listenerCount: 27, health: 'offline', latencyMs: 0 },
+  { language: LANGUAGES[0], listenerCount: 0, health: 'healthy', latencyMs: 145 },
+  { language: LANGUAGES[1], listenerCount: 0, health: 'healthy', latencyMs: 180 },
+  { language: LANGUAGES[2], listenerCount: 0, health: 'healthy', latencyMs: 210 },
+  { language: LANGUAGES[3], listenerCount: 0, health: 'healthy', latencyMs: 450 },
+  { language: LANGUAGES[4], listenerCount: 0, health: 'healthy', latencyMs: 195 },
+  { language: LANGUAGES[6], listenerCount: 0, health: 'healthy', latencyMs: 220 },
+  { language: LANGUAGES[7], listenerCount: 0, health: 'offline', latencyMs: 0 },
 ];
 
 /** Dashboard statistics */

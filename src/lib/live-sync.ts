@@ -14,6 +14,7 @@ export type LiveSyncMessage =
   | { type: 'MIC_STATUS'; payload: { isLive: boolean; speaker: string; audioLevel: number } }
   | { type: 'MEETING_BOT_UPDATE'; payload: { sessionId: string; status: MeetingBotStatus; audioLevel: number; speakerName?: string; details?: string } }
   | { type: 'GLOSSARY_ADDED'; payload: GlossaryTerm }
+  | { type: 'PRESENCE_HEARTBEAT'; payload: { clientId: string; audioLang: string; sessionId?: string } }
   | { type: 'SESSION_RESET'; payload: { sessionId: string } };
 
 export interface LiveSyncListener {
@@ -22,6 +23,7 @@ export interface LiveSyncListener {
   onMicStatus?: (data: { isLive: boolean; speaker: string; audioLevel: number }) => void;
   onMeetingBotUpdate?: (data: { sessionId: string; status: MeetingBotStatus; audioLevel: number; speakerName?: string; details?: string }) => void;
   onGlossaryAdded?: (term: GlossaryTerm) => void;
+  onPresenceHeartbeat?: (data: { clientId: string; audioLang: string; sessionId?: string }) => void;
   onSessionReset?: () => void;
 }
 
@@ -57,6 +59,9 @@ function getChannel(): BroadcastChannel | null {
             break;
           case 'GLOSSARY_ADDED':
             listener.onGlossaryAdded?.(msg.payload);
+            break;
+          case 'PRESENCE_HEARTBEAT':
+            listener.onPresenceHeartbeat?.(msg.payload);
             break;
           case 'SESSION_RESET':
             listener.onSessionReset?.();
@@ -156,4 +161,15 @@ export function getActiveSessionGlossary(): GlossaryTerm[] {
   } catch {
     return GLOSSARY_TERMS;
   }
+}
+
+/**
+ * Broadcasts listener presence heartbeat with their active audio language.
+ */
+export function broadcastPresence(clientId: string, audioLang: string, sessionId?: string): void {
+  const ch = getChannel();
+  ch?.postMessage({
+    type: 'PRESENCE_HEARTBEAT',
+    payload: { clientId, audioLang, sessionId },
+  });
 }

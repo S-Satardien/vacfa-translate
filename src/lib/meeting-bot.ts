@@ -82,7 +82,7 @@ export function createMeetingBotController(
     latencyMs: 340 + Math.floor(Math.random() * 40),
     audioLevel: 0,
     activeSpeaker: undefined,
-    listenerCount: lang.listenerCount || Math.floor(Math.random() * 40 + 10),
+    listenerCount: lang.listenerCount || 0,
   }));
 
   /**

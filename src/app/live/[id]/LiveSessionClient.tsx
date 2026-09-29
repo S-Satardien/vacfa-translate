@@ -31,6 +31,7 @@ import {
   broadcastCaptionInterim,
   broadcastMicStatus,
   broadcastGlossaryAdded,
+  broadcastPresence,
   getActiveSessionGlossary,
 } from '@/lib/live-sync';
 import { createCaptionSimulator } from '@/lib/caption-simulator';
@@ -63,6 +64,15 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [captionLang, setCaptionLang] = useState(session.languages[0]?.code || 'en');
   const [showCaptions, setShowCaptions] = useState(true);
   const [notes, setNotes] = useState('');
+
+  // Real-time channel listener presence state (accurate, non-placeholder)
+  const clientIdRef = useRef<string>(
+    typeof window !== 'undefined'
+      ? `client-${Math.random().toString(36).slice(2, 9)}`
+      : 'client-1'
+  );
+  const [channelListeners, setChannelListeners] = useState<Record<string, number>>({});
+  const remoteClientsRef = useRef<Map<string, { lang: string; time: number }>>(new Map());
 
   // Microsoft Teams In-Meeting Side Panel Detection
   const [isTeamsEmbed, setIsTeamsEmbed] = useState(false);
@@ -246,10 +256,59 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       onGlossaryAdded: (newTerm) => {
         setActiveGlossary((prev) => [newTerm, ...prev]);
       },
+      onPresenceHeartbeat: ({ clientId, audioLang: remoteLang }) => {
+        if (clientId === clientIdRef.current) return;
+        remoteClientsRef.current.set(clientId, { lang: remoteLang, time: Date.now() });
+        const now = Date.now();
+        const counts: Record<string, number> = {};
+        currentSession.languages.forEach((l) => { counts[l.code] = 0; });
+        counts[audioLang] = (counts[audioLang] || 0) + 1;
+        for (const [id, peer] of remoteClientsRef.current.entries()) {
+          if (id === clientIdRef.current) continue;
+          if (now - peer.time < 12000) {
+            counts[peer.lang] = (counts[peer.lang] || 0) + 1;
+          }
+        }
+        setChannelListeners(counts);
+      },
     });
 
     return () => unsubscribe();
-  }, [isPresenterMicLive, playCaptionAudio]);
+  }, [isPresenterMicLive, playCaptionAudio, audioLang, currentSession.languages]);
+
+  // Periodic heartbeat broadcast & listener count aggregation
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const pulse = () => {
+      broadcastPresence(clientIdRef.current, audioLang, currentSession.id);
+    };
+    pulse();
+    const interval = setInterval(pulse, 4000);
+
+    const refreshCounts = () => {
+      const now = Date.now();
+      const counts: Record<string, number> = {};
+      currentSession.languages.forEach((l) => { counts[l.code] = 0; });
+      counts[audioLang] = (counts[audioLang] || 0) + 1;
+      for (const [id, peer] of remoteClientsRef.current.entries()) {
+        if (id === clientIdRef.current) continue;
+        if (now - peer.time < 12000) {
+          counts[peer.lang] = (counts[peer.lang] || 0) + 1;
+        } else {
+          remoteClientsRef.current.delete(id);
+        }
+      }
+      setChannelListeners(counts);
+    };
+
+    const cleanup = setInterval(refreshCounts, 4000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(cleanup);
+    };
+  }, [audioLang, currentSession.id, currentSession.languages]);
 
   // Microsoft Teams Bot Ingestion Relay Bridge (Port 9876: WebSocket + SSE)
   const [isBotRelayConnected, setIsBotRelayConnected] = useState(false);
@@ -724,28 +783,8 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       <div className={styles.leftPanel}>
         <div style={{ flex: '0 0 auto' }}>
           <div className={styles.headerInfo}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
               <div className={styles.liveBadge}>LIVE</div>
-              <button
-                onClick={() => setIsAiConfigOpen(true)}
-                title="Configure Gemini AI"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  background: hasApiKey ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.06)',
-                  border: `1px solid ${hasApiKey ? 'var(--success)' : 'rgba(255, 255, 255, 0.15)'}`,
-                  color: hasApiKey ? 'var(--success)' : 'var(--cream)',
-                  fontSize: '0.75rem',
-                  padding: '4px 8px',
-                  borderRadius: '999px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                }}
-              >
-                <Sparkles size={12} />
-                <span>{hasApiKey ? 'Gemini AI' : 'Smart AI'}</span>
-              </button>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
@@ -829,62 +868,6 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                 {micErrorMessage}
               </p>
             )}
-
-            {/* Floor Speaker Language Selector */}
-            <div
-              style={{
-                marginTop: '10px',
-                background: 'rgba(255, 255, 255, 0.04)',
-                borderRadius: '8px',
-                padding: '8px 10px',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  color: 'var(--cream)',
-                  marginBottom: '6px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                }}
-              >
-                <Mic size={12} color="var(--vacfa-red-light)" />
-                Floor Language:
-              </div>
-              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                {[
-                  { code: 'auto', label: '⚡ Auto' },
-                  { code: 'en', label: '🇬🇧 EN' },
-                  { code: 'fr', label: '🇫🇷 FR' },
-                  { code: 'pt', label: '🇵🇹 PT' },
-                  { code: 'sw', label: '🇹🇿 SW' },
-                ].map((item) => {
-                  const isSelected = floorLanguage === item.code;
-                  return (
-                    <button
-                      key={item.code}
-                      onClick={() => handleFloorLanguageChange(item.code as any)}
-                      style={{
-                        padding: '4px 7px',
-                        borderRadius: '6px',
-                        fontSize: '0.72rem',
-                        fontWeight: 600,
-                        border: isSelected ? '1px solid var(--vacfa-red)' : '1px solid rgba(255, 255, 255, 0.1)',
-                        background: isSelected ? 'var(--vacfa-red)' : 'rgba(255, 255, 255, 0.04)',
-                        color: isSelected ? 'white' : 'var(--cream)',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
           </div>
 
           {/* Audio Waveform (reactive to actual mic volume or simulator) */}
@@ -1126,7 +1109,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                     <div>
                       <div className={styles.channelName}>{lang.name}</div>
                       <div className={styles.listenerCount}>
-                        <Users size={12} /> {lang.listenerCount || 0}
+                        <Users size={12} /> {channelListeners[lang.code] !== undefined ? channelListeners[lang.code] : (audioLang === lang.code ? 1 : 0)}
                       </div>
                     </div>
                   </div>

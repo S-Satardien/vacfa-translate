@@ -522,20 +522,28 @@ export const GLOSSARY_TERMS: GlossaryTerm[] = [
   },
 ];
 
+/** Multilingual onboarding instruction caption for new sessions */
+export const INITIAL_INSTRUCTION_CAPTION: CaptionEntry = {
+  id: 'instruction-001',
+  speaker: 'VACFA Conference System',
+  timestamp: 'Live',
+  originalText: 'Welcome to the session. Please select your audio channel on the right and click Listen to unmute. Choose your preferred language for real-time captions.',
+  translations: {
+    en: 'Welcome to the session. Please select your audio channel on the right and click Listen to unmute. Choose your preferred language for real-time captions.',
+    fr: 'Bienvenue à la session. Veuillez sélectionner votre canal audio sur la droite et cliquer sur Écouter pour activer le son. Choisissez votre langue pour les sous-titres en direct.',
+    pt: 'Bem-vindo à sessão. Selecione o seu canal de áudio à direita e clique em Ouvir para ativar o som. Escolha o seu idioma preferido para legendas em tempo real.',
+    sw: 'Karibu kwenye kipindi. Tafadhali chagua kituo chako cha sauti upande wa kulia na ubofye Sikiliza ili kuwasha sauti. Chagua lugha unayopendelea kwa manukuu ya moja kwa moja.',
+    yo: 'Ẹ káàbọ̀ sí ìpàdé yìí. Jọ̀wọ́ yan ibi ìgbọ́rọ̀ rẹ ní apá ọ̀tún kí o tẹ Gbọ́ láti ṣí ohùn. Yan èdè tí o fẹ́ fún àwọn àkọlé lásìkò gangan.',
+    zu: 'Siyakwamukela kulesi seshini. Sicela ukhethe isiteshi sakho somsindo kwesokudla bese uchofoza u-Lalela ukuvula umsindo. Khetha ulimi oluthandayo lwemibhalo engezansi yesikhathi sangempela.',
+    am: 'ወደ ስብሰባው በደህና መጡ። እባክዎ በቀኝ በኩል ያለውን የኦዲዮ ቻናል ይምረጡና ድምፁን ለማብራት ማዳመጥ የሚለውን ይጫኑ። ለቀጥታ የትርጉም ጽሑፍ የመረጡትን ቋንቋ ይምረጡ።',
+    ha: 'Barka da zuwa wannan zama. Da fatan za a zaɓi tashar sauti a hannun dama kuma danna Saurara don kunna sauti. Zaɓi yaren da kuka fi so don fassarar rubutu ta kai tsaye.',
+  },
+  glossaryTerms: [],
+};
+
 /** Simulated live caption transcript for a vaccine conference */
 export const DEMO_CAPTIONS: CaptionEntry[] = [
-  {
-    id: 'cap-001',
-    speaker: 'Dr. Amina Osei',
-    timestamp: '09:00:12',
-    originalText: 'Good morning, everyone. Welcome to the GAVI Immunization Summit 2026.',
-    translations: {
-      fr: 'Bonjour à tous. Bienvenue au Sommet de Vaccination GAVI 2026.',
-      pt: 'Bom dia a todos. Bem-vindos à Cúpula de Imunização GAVI 2026.',
-      sw: 'Habari za asubuhi, kila mtu. Karibuni kwenye Mkutano wa Chanjo wa GAVI wa 2026.'
-    },
-    glossaryTerms: [],
-  },
+  INITIAL_INSTRUCTION_CAPTION,
   {
     id: 'cap-002',
     speaker: 'Dr. Amina Osei',

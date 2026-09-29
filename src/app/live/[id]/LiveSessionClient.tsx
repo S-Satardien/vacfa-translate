@@ -34,7 +34,7 @@ import {
   broadcastPresence,
   getActiveSessionGlossary,
 } from '@/lib/live-sync';
-import { createCaptionSimulator } from '@/lib/caption-simulator';
+import { INITIAL_INSTRUCTION_CAPTION } from '@/lib/demo-data';
 import { sendTeamsCartCaption } from '@/lib/teams-cart';
 import styles from './LiveSession.module.css';
 
@@ -101,7 +101,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   };
 
   // Live Captions state
-  const [captions, setCaptions] = useState<CaptionEntry[]>([]);
+  const [captions, setCaptions] = useState<CaptionEntry[]>([INITIAL_INSTRUCTION_CAPTION]);
   const [partialText, setPartialText] = useState('');
   const [currentSpeaker, setCurrentSpeaker] = useState('');
   const captionsEndRef = useRef<HTMLDivElement>(null);
@@ -117,9 +117,6 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [glossaryCategory, setGlossaryCategory] = useState<'immunology' | 'epidemiology' | 'logistics' | 'policy'>('epidemiology');
   const [glossaryContext, setGlossaryContext] = useState('');
   const [glossarySubmitted, setGlossarySubmitted] = useState(false);
-
-  // Fallback simulator reference
-  const simulatorRef = useRef<ReturnType<typeof createCaptionSimulator> | null>(null);
 
   // Initialize Speech Synthesis controller
   useEffect(() => {
@@ -460,38 +457,6 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     };
   }, [floorLanguage, handleFinalSpeech]);
 
-  // Fallback simulator: Run demo loop if presenter mic is idle and no live captions exist
-  useEffect(() => {
-    if (isPresenterMicLive || captions.length > 0) {
-      simulatorRef.current?.pause();
-      return;
-    }
-
-    let localCaptions: CaptionEntry[] = [];
-    const sim = createCaptionSimulator({
-      onWordTyped: (partial) => {
-        setPartialText(partial);
-      },
-      onCaptionComplete: (cap) => {
-        localCaptions = [...localCaptions, cap];
-        setCaptions(localCaptions);
-        setPartialText('');
-        playCaptionAudio(cap);
-      },
-      onSpeakerChange: (speaker) => {
-        setCurrentSpeaker(speaker);
-      },
-    });
-
-    simulatorRef.current = sim;
-    sim.setLanguage(captionLang);
-    sim.start();
-
-    return () => {
-      sim.pause();
-    };
-  }, [isPresenterMicLive, captions.length, captionLang, playCaptionAudio]);
-
   // Toggle Presenter Microphone
   const togglePresenterMic = async () => {
     setMicErrorMessage('');
@@ -499,8 +464,6 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       speechRecognizerRef.current?.stop();
     } else {
       unlockAudioPlayback();
-      // Pause simulator when presenter starts speaking
-      simulatorRef.current?.pause();
       await speechRecognizerRef.current?.start();
     }
   };
@@ -967,17 +930,6 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   >
                     {isPresenterMicLive ? 'Microphone Active' : 'Start My Microphone'}
                   </Button>
-                  <Button
-                    variant="outline"
-                    icon={<Play size={15} />}
-                    onClick={() => {
-                      if (simulatorRef.current) {
-                        simulatorRef.current.start();
-                      }
-                    }}
-                  >
-                    Simulate Test Speech
-                  </Button>
                 </div>
               </div>
             )}
@@ -991,11 +943,18 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                 >
                   <div className={styles.captionHeader}>
                     <span className={styles.speaker}>
-                      <Mic size={14} className="inline mr-1" /> {cap.speaker}
+                      {cap.id.startsWith('instruction') ? (
+                        <Globe size={14} className="inline mr-1 text-vacfa-red-light" />
+                      ) : (
+                        <Mic size={14} className="inline mr-1" />
+                      )}
+                      {' '}{cap.speaker}
                     </span>
                     <span>{cap.timestamp}</span>
                   </div>
-                  <div className={styles.originalText}>{cap.originalText}</div>
+                  {cap.originalText !== (cap.translations?.[captionLang] || cap.originalText) && (
+                    <div className={styles.originalText}>{cap.originalText}</div>
+                  )}
                   <div className={styles.translatedText}>
                     {renderTextWithGlossary(
                       cap.translations?.[captionLang] || cap.originalText,

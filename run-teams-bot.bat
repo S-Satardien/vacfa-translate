@@ -1,14 +1,13 @@
 @echo off
-setlocal
-cd /d "%~dp0"
-title VACFA AI Teams Bot Runner
+title VACFA Translate — Teams Bot v2 (Audio Capture)
 echo =============================================================================
-echo   VACFA Translate - Microsoft Teams Bot Runner
+echo   VACFA Translate — Teams Bot v2
+echo   Architecture: WebRTC Audio Capture + Gemini STT + Translation
 echo =============================================================================
 echo.
-node scripts\teams-bot-runner.js %*
-if %errorlevel% neq 0 (
-    echo.
-    echo [VACFA Bot] Process exited with code %errorlevel%.
-    pause
-)
+echo Starting bot runner...
+echo.
+node "%~dp0scripts\teams-bot-runner.js" %*
+echo.
+echo Bot stopped.
+pause

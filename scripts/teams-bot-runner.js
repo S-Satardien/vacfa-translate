@@ -1,17 +1,18 @@
 /**
- * VACFA Translate — Microsoft Teams Virtual Attendee Bot Runner
- * 
- * Joins Microsoft Teams meetings directly via WebRTC without requiring
- * tenant admin approval or third-party Teams App Store permissions.
- * 
- * Capabilities:
- * 1. Launches browser (Chrome / Edge) with WebRTC audio flags and isolated profile.
- * 2. Joins meeting as an external/guest attendee named "VACFA AI Interpreter".
- * 3. Ingests all meeting speakers via Microsoft Teams native Live Cloud Captions.
- * 4. Translates speech in real time across English, French, Portuguese, and Swahili using Google Gemini 3.8 Flash.
- * 5. Pushes translated subtitles directly into Microsoft Teams CART captions.
- * 6. Streams live speech and translations to the VACFA Web App via built-in SSE relay (port 9876).
- * 
+ * VACFA Translate — Microsoft Teams Bot Runner v2
+ *
+ * Architecture: WebRTC Audio Intercept + Gemini Multimodal STT + Translation
+ *
+ * Key changes from v1:
+ *  1. Uses CDP Page.setBypassCSP to eliminate Teams' Trusted Types / CSP blocks
+ *     that were killing WASM audio workers.
+ *  2. Monkey-patches RTCPeerConnection via Page.addScriptToEvaluateOnNewDocument
+ *     so the interceptor is in place BEFORE Teams JS loads.
+ *  3. Captures mixed remote audio (all participants) via MediaRecorder → WebM/Opus.
+ *  4. Sends audio chunks to Gemini multimodal API for combined STT + translation.
+ *  5. Uses Runtime.addBinding for reliable browser→Node IPC (no console.log parsing).
+ *  6. Keeps an enhanced DOM caption observer as a fallback path.
+ *
  * Usage:
  *   node scripts/teams-bot-runner.js "<TEAMS_MEETING_URL>" ["<CART_URL>"] ["<SESSION_URL>"] ["<JOIN_CODE>"]
  */
@@ -23,317 +24,309 @@ const os = require('os');
 const https = require('https');
 const http = require('http');
 
-// Load environment variables from .env.local if present
+// ============================================================================
+// 0. Environment
+// ============================================================================
 function loadEnvLocal() {
   const envPath = path.join(__dirname, '..', '.env.local');
   if (fs.existsSync(envPath)) {
     try {
       const content = fs.readFileSync(envPath, 'utf8');
-      const lines = content.split('\n');
-      for (const line of lines) {
-        const match = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)?\s*$/);
-        if (match) {
-          const key = match[1];
-          let val = match[2] || '';
-          val = val.replace(/^['"]|['"]$/g, '').trim();
-          if (!process.env[key]) {
-            process.env[key] = val;
-          }
+      for (const line of content.split('\n')) {
+        const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)?$/);
+        if (m) {
+          const key = m[1];
+          const val = (m[2] || '').replace(/^['"]|['"]$/g, '').trim();
+          if (!process.env[key]) process.env[key] = val;
         }
       }
-    } catch {}
+    } catch { /* ignore */ }
   }
 }
 loadEnvLocal();
 
-const DEFAULT_TEST2_MEETING_URL = 'https://teams.microsoft.com/meet/35898491838902?p=t69Kw3xIC3m9il84Z2';
-const DEFAULT_TEST2_CART_URL = 'https://api.captions.office.microsoft.com/cartcaption?meetingid=%7b%22tId%22%3a%2292454335-564e-4ccf-b0b0-24445b8c03f7%22%2c%22oId%22%3a%224ddd5689-9ad7-4554-97c8-a3cc026a86c8%22%2c%22thId%22%3a%2219%3ameeting_NTNlNjcwYmYtNGYyNi00MjQ4LTkzNTYtZDRmNThhNTVlMTI0%40thread.v2%22%2c%22mId%22%3a%220%22%7d&token=drnt33k';
+// ============================================================================
+// 1. Configuration
+// ============================================================================
+const DEFAULT_MEETING_URL =
+  'https://teams.microsoft.com/meet/35898491838902?p=t69Kw3xIC3m9il84Z2';
+const DEFAULT_CART_URL = '';
 
-const MEETING_URL = process.argv[2] || process.env.TEAMS_MEETING_URL || DEFAULT_TEST2_MEETING_URL;
-const CART_URL = process.argv[3] || process.env.TEAMS_CART_URL || DEFAULT_TEST2_CART_URL;
-const BOT_NAME = process.env.BOT_NAME || 'VACFA AI Interpreter';
-const BOT_EMAIL = process.env.BOT_EMAIL || 'bot@vacfa-translate.org';
-const DEBUG_PORT = process.env.DEBUG_PORT || 9222;
-const RELAY_PORT = 9876;
-const SESSION_URL = process.argv[4] || process.env.SESSION_URL || 'https://s-satardien.github.io/vacfa-translate/live/session-008';
-const JOIN_CODE = process.argv[5] || process.env.JOIN_CODE || '736532';
-const CHAT_ANNOUNCEMENT = `🌐 VACFA AI Live Interpretation is active for this meeting! 🎧 Listen in French, Portuguese, or Swahili: ${SESSION_URL} (or join via code ${JOIN_CODE} at https://s-satardien.github.io/vacfa-translate/join)`;
+const MEETING_URL  = process.argv[2] || process.env.TEAMS_MEETING_URL || DEFAULT_MEETING_URL;
+const CART_URL     = process.argv[3] || process.env.TEAMS_CART_URL    || DEFAULT_CART_URL;
+const SESSION_URL  = process.argv[4] || process.env.SESSION_URL       || 'https://s-satardien.github.io/vacfa-translate/live/session-008';
+const JOIN_CODE    = process.argv[5] || process.env.JOIN_CODE         || '736532';
+const BOT_NAME     = process.env.BOT_NAME  || 'VACFA AI Interpreter';
+const BOT_EMAIL    = process.env.BOT_EMAIL || 'bot@vacfa-translate.org';
+const DEBUG_PORT   = process.env.DEBUG_PORT || 9222;
+const RELAY_PORT   = 9876;
 
-console.log(`=============================================================================`);
-console.log(`  VACFA Translate — Virtual Attendee Bot`);
-console.log(`=============================================================================`);
-console.log(`[VACFA Bot] Target Meeting: ${MEETING_URL}`);
-console.log(`[VACFA Bot] Bot Identity  : ${BOT_NAME} (${BOT_EMAIL})`);
-console.log(`[VACFA Bot] Listener URL  : ${SESSION_URL} (Code: ${JOIN_CODE})`);
-if (CART_URL) {
-  console.log(`[VACFA Bot] CART Ingestion: ${CART_URL.slice(0, 60)}...`);
-}
-console.log(`-----------------------------------------------------------------------------`);
+const CHAT_ANNOUNCEMENT =
+  `🌐 VACFA AI Live Interpretation is active! 🎧 Listen: ${SESSION_URL} (code ${JOIN_CODE})`;
+
+console.log('='.repeat(77));
+console.log('  VACFA Translate — Virtual Attendee Bot  v2 (Audio Capture)');
+console.log('='.repeat(77));
+console.log(`[Bot] Meeting : ${MEETING_URL}`);
+console.log(`[Bot] Identity: ${BOT_NAME}`);
+console.log(`[Bot] Listener: ${SESSION_URL} (Code: ${JOIN_CODE})`);
+console.log('-'.repeat(77));
 
 // ============================================================================
-// 1. Local WebSocket & SSE Relay Server (Streams speech to VACFA Live Session App)
+// 2. Local Relay Server (WebSocket + SSE → VACFA Live Session App)
 // ============================================================================
 const sseClients = new Set();
 let wss = null;
 
 const relayServer = http.createServer((req, res) => {
-  // Allow cross-origin requests from GitHub Pages or localhost
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   if (req.url === '/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
     });
-
-    res.write(`data: ${JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME, meetingUrl: MEETING_URL, sessionUrl: SESSION_URL })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME })}\n\n`);
     sseClients.add(res);
-    console.log(`[VACFA Relay] Live session client connected via SSE (Total active web listeners: ${sseClients.size})`);
-
-    req.on('close', () => {
-      sseClients.delete(res);
-    });
+    console.log(`[Relay] SSE client connected (total: ${sseClients.size})`);
+    req.on('close', () => sseClients.delete(res));
     return;
   }
-
   if (req.url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'running', botName: BOT_NAME, clients: sseClients.size, meetingUrl: MEETING_URL }));
+    res.end(JSON.stringify({ status: 'running', botName: BOT_NAME, clients: sseClients.size }));
     return;
   }
-
-  res.writeHead(404);
-  res.end();
+  res.writeHead(404); res.end();
 });
 
 relayServer.listen(RELAY_PORT, '127.0.0.1', () => {
-  console.log(`[VACFA Relay] Stream Server active on:`);
-  console.log(`  - WebSocket : ws://127.0.0.1:${RELAY_PORT}`);
-  console.log(`  - SSE Event : http://127.0.0.1:${RELAY_PORT}/events`);
+  console.log(`[Relay] ws://127.0.0.1:${RELAY_PORT}  |  http://127.0.0.1:${RELAY_PORT}/events`);
 });
 
 try {
   const { WebSocketServer } = require('ws');
   wss = new WebSocketServer({ server: relayServer });
   wss.on('connection', (client) => {
-    console.log(`[VACFA Relay] Live session web app connected via WebSocket! (Total listeners: ${wss.clients.size})`);
-    client.send(JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME, meetingUrl: MEETING_URL, sessionUrl: SESSION_URL }));
+    console.log(`[Relay] WebSocket client connected (total: ${wss.clients.size})`);
+    client.send(JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME }));
   });
-} catch (wsErr) {
-  console.log('[VACFA Relay] Notice: Running in HTTP SSE mode.');
-}
+} catch { console.log('[Relay] ws package not found — SSE-only mode'); }
 
-// Periodic heartbeat every 15s to keep connections alive
 setInterval(() => {
-  for (const client of sseClients) {
-    try {
-      client.write(':heartbeat\n\n');
-    } catch {
-      sseClients.delete(client);
-    }
+  for (const c of sseClients) {
+    try { c.write(':heartbeat\n\n'); } catch { sseClients.delete(c); }
   }
 }, 15000);
 
+/** Broadcast a JSON payload to every connected web-app client. */
 function broadcastToClients(data) {
-  const rawJson = JSON.stringify(data);
-
-  // Send to all connected WebSocket clients (GitHub Pages / web app)
-  if (wss) {
-    for (const client of wss.clients) {
-      if (client.readyState === 1 /* OPEN */) {
-        try {
-          client.send(rawJson);
-        } catch {}
-      }
-    }
+  const raw = JSON.stringify(data);
+  if (wss) for (const c of wss.clients) {
+    if (c.readyState === 1) try { c.send(raw); } catch { /* skip */ }
   }
-
-  // Send to all connected Server-Sent Events clients
-  const ssePayload = `data: ${rawJson}\n\n`;
-  for (const client of sseClients) {
-    try {
-      client.write(ssePayload);
-    } catch {
-      sseClients.delete(client);
-    }
+  const sse = `data: ${raw}\n\n`;
+  for (const c of sseClients) {
+    try { c.write(sse); } catch { sseClients.delete(c); }
   }
 }
 
 // ============================================================================
-// 2. Gemini Real-Time Translation & Fallback Engine
+// 3. Gemini — Audio Transcription + Translation (single API call)
 // ============================================================================
-const MEDICAL_GLOSSARY_PROMPT = `
-You are VACFA Translate, an expert real-time conference interpreter for African public health summits.
-1. The speaker may speak English, French, Portuguese, or Swahili.
-2. Accurately translate their speech into English (en), French (fr), Portuguese (pt), and Swahili (sw).
-3. Strictly preserve and enforce these approved VACFA medical terms:
-   - NITAG (National Immunization Technical Advisory Group) -> FR: NITAG, PT: NITAG, SW: NITAG
-   - NISH (Vaccine Innovation and Strengthening Hub) -> FR: NISH, PT: NISH, SW: NISH
-   - RITAG (Regional Immunization Technical Advisory Group) -> FR: RITAG, PT: RITAG, SW: RITAG
-   - AEFI (Adverse Events Following Immunization) -> FR: MAPI, PT: EAPV, SW: AEFI
-   - EPI (Expanded Programme on Immunization) -> FR: PEV, PT: PAV, SW: EPI
-   - VVM (Vaccine Vial Monitor) -> FR: PCV, PT: MVV, SW: VVM
-   - Gavi (Gavi, the Vaccine Alliance) -> FR: Gavi, PT: Gavi, SW: Gavi
-   - mRNA -> FR: ARNm, PT: mRNA, SW: mRNA
-   - Zero-dose child -> FR: enfant zéro-dose, PT: criança dose-zero, SW: mtoto asiyechanjwa kabisa
-   - Cold chain -> FR: chaîne du froid, PT: cadeia de frio, SW: mfumo wa baridi
+const AUDIO_SYSTEM_PROMPT = `
+You are VACFA Translate, an expert real-time interpreter for African public health conferences.
 
-Output ONLY valid JSON matching this schema:
+Listen to the audio. Perform ALL of these steps:
+1. Transcribe the speech in its original language.
+2. Detect the source language (en, fr, pt, or sw).
+3. Translate into English (en), French (fr), Portuguese (pt), and Swahili (sw).
+4. Flag any VACFA medical glossary terms found.
+
+VACFA Glossary (always use these translations):
+  NITAG → FR: NITAG, PT: NITAG, SW: NITAG
+  AEFI  → FR: MAPI,  PT: EAPV,  SW: AEFI
+  EPI   → FR: PEV,   PT: PAV,   SW: EPI
+  VVM   → FR: PCV,   PT: MVV,   SW: VVM
+  Gavi  → FR: Gavi,  PT: Gavi,  SW: Gavi
+  mRNA  → FR: ARNm,  PT: mRNA,  SW: mRNA
+  Zero-dose child → FR: enfant zéro-dose, PT: criança dose-zero, SW: mtoto asiyechanjwa kabisa
+  Cold chain      → FR: chaîne du froid,  PT: cadeia de frio,    SW: mfumo wa baridi
+
+If the audio contains NO intelligible speech, output: { "noSpeech": true }
+
+Output ONLY valid JSON:
 {
-  "detectedLanguage": "en|fr|pt|sw",
-  "translations": {
-    "en": "...",
-    "fr": "...",
-    "pt": "...",
-    "sw": "..."
-  },
-  "detectedGlossaryTerms": ["..."]
-}
-`;
+  "transcript": "exact words spoken",
+  "detectedLanguage": "en",
+  "speaker": "Unknown",
+  "translations": { "en": "...", "fr": "...", "pt": "...", "sw": "..." },
+  "detectedGlossaryTerms": []
+}`;
 
-async function translateUtterance(text, speaker = 'Participant') {
+let audioCallCount = 0;
+
+/**
+ * Sends a WebM audio chunk to Gemini for combined STT + translation.
+ * @param {string} base64Audio - Base64-encoded audio/webm data
+ * @returns {Promise<object|null>} Parsed result or null on failure
+ */
+async function transcribeAndTranslateAudio(base64Audio) {
   const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-  const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.8-flash',
-    'gemini-flash-latest',
-    'gemini-3.8-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-pro-latest',
+  if (!apiKey) { console.error('[Gemini] No API key'); return null; }
+
+  const models = [
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
-  if (apiKey) {
-    for (const model of candidateModels) {
-      try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
+  for (const model of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
 
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: `Speaker "${speaker}": "${text}"` }] }],
-            systemInstruction: { parts: [{ text: MEDICAL_GLOSSARY_PROMPT }] },
-            generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inlineData: { mimeType: 'audio/webm', data: base64Audio } },
+              { text: 'Transcribe and translate this audio segment.' },
+            ],
+          }],
+          systemInstruction: { parts: [{ text: AUDIO_SYSTEM_PROMPT }] },
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
 
-        if (!response.ok) continue;
-        const data = await response.json();
-        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!raw) continue;
-        const parsed = JSON.parse(raw);
+      if (!res.ok) { continue; }
+      const json = await res.json();
+      const raw = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) continue;
 
-        return {
-          sourceLang: parsed.detectedLanguage || 'en',
-          translations: parsed.translations || { en: text, fr: text, pt: text, sw: text },
-          glossaryTerms: parsed.detectedGlossaryTerms || [],
-          provider: `Gemini (${model})`,
-        };
-      } catch {
-        // Try next candidate model
-      }
-    }
+      const parsed = JSON.parse(raw);
+      if (parsed.noSpeech) return null;
+
+      audioCallCount++;
+      parsed._model = model;
+      return parsed;
+    } catch { /* try next model */ }
   }
+  return null;
+}
 
-  // Fallback to MyMemory Public API
+// ============================================================================
+// 4. Gemini — Text-Only Translation (fallback for caption scraping path)
+// ============================================================================
+const TEXT_TRANSLATION_PROMPT = `
+You are VACFA Translate. Translate the given text into en, fr, pt, sw.
+Use VACFA medical glossary terms where applicable.
+Output ONLY valid JSON:
+{ "detectedLanguage":"en", "translations":{"en":"...","fr":"...","pt":"...","sw":"..."}, "detectedGlossaryTerms":[] }`;
+
+async function translateText(text, speaker = 'Participant') {
+  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) return fallbackTranslate(text);
+
+  const models = [
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+  ].filter((m, i, a) => m && a.indexOf(m) === i);
+
+  for (const model of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: `Speaker "${speaker}": "${text}"` }] }],
+          systemInstruction: { parts: [{ text: TEXT_TRANSLATION_PROMPT }] },
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) continue;
+      const p = JSON.parse(raw);
+      return {
+        sourceLang: p.detectedLanguage || 'en',
+        translations: p.translations || { en: text, fr: text, pt: text, sw: text },
+        glossaryTerms: p.detectedGlossaryTerms || [],
+        provider: `Gemini (${model})`,
+      };
+    } catch { /* next */ }
+  }
   return fallbackTranslate(text);
 }
 
 async function fallbackTranslate(text) {
   const translations = { en: text, fr: text, pt: text, sw: text };
-  try {
-    const targets = ['fr', 'pt', 'sw'];
-    await Promise.all(
-      targets.map(async (tgt) => {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 3500);
-          const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${tgt}&de=vacfa@uct.ac.za`, {
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          if (res.ok) {
-            const data = await res.json();
-            const translated = data?.responseData?.translatedText;
-            if (translated && !translated.includes('MYMEMORY')) {
-              translations[tgt] = translated;
-            }
-          }
-        } catch {}
-      })
-    );
-  } catch {}
-
-  return {
-    sourceLang: 'en',
-    translations,
-    glossaryTerms: [],
-    provider: 'Smart Fallback (Public Engine)',
-  };
+  const targets = ['fr', 'pt', 'sw'];
+  await Promise.allSettled(targets.map(async (tgt) => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 3500);
+      const res = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${tgt}&de=vacfa@uct.ac.za`,
+        { signal: ctrl.signal }
+      );
+      clearTimeout(t);
+      if (res.ok) {
+        const d = await res.json();
+        const tr = d?.responseData?.translatedText;
+        if (tr && !tr.includes('MYMEMORY')) translations[tgt] = tr;
+      }
+    } catch { /* skip */ }
+  }));
+  return { sourceLang: 'en', translations, glossaryTerms: [], provider: 'Fallback' };
 }
 
 // ============================================================================
-// 3. Microsoft Teams CART Caption Dispatcher
+// 5. Microsoft Teams CART Caption Dispatcher
 // ============================================================================
 function sendCartCaption(cartUrl, text, speakerName = BOT_NAME) {
   if (!cartUrl) return Promise.resolve(false);
-
   return new Promise((resolve) => {
     try {
-      const url = new URL(cartUrl);
-      const isHttps = url.protocol === 'https:';
-      const client = isHttps ? https : http;
-
-      const timestamp = new Date().toISOString();
-      const payload = `${timestamp} ${speakerName}: ${text}\r\n\r\n`;
-
-      const req = client.request(
-        {
-          hostname: url.hostname,
-          port: url.port || (isHttps ? 443 : 80),
-          path: `${url.pathname}${url.search}`,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
-            'Content-Length': Buffer.byteLength(payload, 'utf8'),
-          },
-          timeout: 4000,
-        },
-        (res) => {
-          resolve(res.statusCode === 200 || res.statusCode === 201);
-        }
-      );
-
+      const u = new URL(cartUrl);
+      const client = u.protocol === 'https:' ? https : http;
+      const payload = `${new Date().toISOString()} ${speakerName}: ${text}\r\n\r\n`;
+      const req = client.request({
+        hostname: u.hostname,
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: `${u.pathname}${u.search}`,
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': Buffer.byteLength(payload) },
+        timeout: 4000,
+      }, (r) => resolve(r.statusCode < 300));
       req.on('error', () => resolve(false));
-      req.on('timeout', () => {
-        req.destroy();
-        resolve(false);
-      });
-
+      req.on('timeout', () => { req.destroy(); resolve(false); });
       req.write(payload);
       req.end();
-    } catch {
-      resolve(false);
-    }
+    } catch { resolve(false); }
   });
 }
 
 // ============================================================================
-// 4. Browser Discovery
+// 6. Browser Discovery
 // ============================================================================
 function findBrowser() {
   const candidates = [
@@ -345,330 +338,424 @@ function findBrowser() {
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
     '/usr/bin/google-chrome',
     '/usr/bin/chromium-browser',
-    '/usr/bin/microsoft-edge',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
   ].filter(Boolean);
-
-  for (const bin of candidates) {
-    if (fs.existsSync(bin)) return bin;
-  }
+  for (const bin of candidates) if (fs.existsSync(bin)) return bin;
   return null;
 }
 
 // ============================================================================
-// 5. Teams Web Client Script: Auto-Join, Live Captions, and Speech Harvester
+// 7. CDP Injection Scripts (evaluated BEFORE Teams JS loads)
 // ============================================================================
-const IN_MEETING_CONTROLLER_SCRIPT = `
-(function() {
-  if (window.__VACFA_BOT_INITIALIZED__) return;
-  window.__VACFA_BOT_INITIALIZED__ = true;
-  console.log('[VACFA In-Meeting Engine] Loaded inside Teams Web client.');
 
-  // Step 1: Pre-join automation
-  function handlePreJoin() {
-    // 1a. Handle "Continue on this browser" button
-    const continueOnBrowserBtn = Array.from(document.querySelectorAll('button, a')).find(el => 
-      /continue on this browser/i.test(el.textContent || '') ||
-      el.getAttribute('data-tid') === 'joinOnWeb'
-    );
-    if (continueOnBrowserBtn) {
-      console.log('[VACFA Bot] Clicking "Continue on this browser"...');
-      continueOnBrowserBtn.click();
-    }
+/**
+ * Script A — WebRTC Audio Interceptor
+ *
+ * Monkey-patches RTCPeerConnection and HTMLMediaElement.srcObject BEFORE
+ * Teams bundles execute. Captures the mixed remote audio stream via
+ * MediaRecorder and sends 3.5-second WebM/Opus chunks to the host via
+ * Runtime.addBinding('vacfaAudioChunk').
+ */
+const AUDIO_INTERCEPTOR_SCRIPT = `
+(function(){
+  if(!location.href.includes('teams.microsoft.com')&&!location.href.includes('teams.live.com'))return;
+  if(window.__VACFA_RTC_HOOKED__)return;
+  window.__VACFA_RTC_HOOKED__=true;
 
-    // 1b. Check if name input exists
-    const nameInput = document.querySelector('input[data-tid="prejoin-display-name-input"], input[placeholder*="name" i], input[aria-label*="name" i]');
-    if (nameInput && nameInput.value !== "${BOT_NAME}") {
-      nameInput.value = "${BOT_NAME}";
-      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
-      console.log('[VACFA Bot] Set attendee display name to "${BOT_NAME}".');
-    }
+  const LOG='[VACFA Audio]';
+  let captureActive=false;
+  const seenTracks=new Set();
 
-    // 1c. Mute mic button
-    const micBtn = document.querySelector('button[data-tid="toggle-mute"], button[aria-label*="microphone" i], button[aria-label*="mic" i]');
-    if (micBtn && micBtn.getAttribute('aria-checked') === 'true') {
-      micBtn.click();
-      console.log('[VACFA Bot] Pre-emptively muted bot microphone.');
-    }
-
-    // 1d. Turn off camera button
-    const camBtn = document.querySelector('button[data-tid="toggle-video"], button[aria-label*="camera" i], button[aria-label*="video" i]');
-    if (camBtn && camBtn.getAttribute('aria-checked') === 'true') {
-      camBtn.click();
-      console.log('[VACFA Bot] Pre-emptively disabled camera.');
-    }
-
-    // 1e. Click "Join now"
-    const joinBtn = document.querySelector('button[data-tid="prejoin-join-button"], button#prejoin-join-button');
-    if (joinBtn && !joinBtn.disabled) {
-      console.log('[VACFA Bot] Clicking "Join now"...');
-      joinBtn.click();
-    }
-  }
-
-  // Poll for pre-join elements
-  let joinAttempts = 0;
-  const preJoinInterval = setInterval(() => {
-    handlePreJoin();
-    joinAttempts++;
-    
-    // Detect if inside meeting room
-    const inMeeting = document.querySelector('div[data-tid="calling-active-speaker"], div[data-tid="participant-stream"], div[data-tid="calling-roster-section"], div[data-tid="calling-more-actions"], button[data-tid="calling-more-actions"]');
-    if (inMeeting) {
-      clearInterval(preJoinInterval);
-      console.log('[VACFA Bot] Connected inside Teams meeting call!');
-      startCaptionsSystem();
-      startActiveSpeakerMonitor();
-      initChatAnnouncementLoop();
-    }
-  }, 1000);
-
-  // Step 2: Auto-Enable Teams Live Captions and Harvest All Speakers
-  function startCaptionsSystem() {
-    console.log('[VACFA Bot] Initializing Teams Cloud Live Captions Harvester...');
-
-    // Attempt to toggle live captions ON in Teams
-    function turnOnCaptions() {
-      // Check if captions container already exists
-      const captionsRenderer = document.querySelector('div[data-tid="closed-captions-renderer"], div[class*="closed-captions"], div[class*="closedCaptions"]');
-      if (captionsRenderer) {
-        console.log('[VACFA Bot] Teams Live Captions already active in meeting.');
-        return;
-      }
-
-      // Try keyboard shortcut Ctrl+Shift+C on document
-      document.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'C',
-        code: 'KeyC',
-        keyCode: 67,
-        which: 67,
-        ctrlKey: true,
-        shiftKey: true,
-        bubbles: true,
-      }));
-
-      // Try clicking "More actions" (...) -> "Turn on live captions"
-      const moreBtn = document.querySelector('button[data-tid="calling-more-actions"], button#callingButtons-showMoreBtn, button[aria-label*="More" i]');
-      if (moreBtn) {
-        moreBtn.click();
-        setTimeout(() => {
-          const captionMenuBtn = Array.from(document.querySelectorAll('button, div, li')).find(el =>
-            /turn on live captions/i.test(el.textContent || '') ||
-            el.getAttribute('data-tid') === 'captions-menu-item' ||
-            /live captions/i.test(el.getAttribute('aria-label') || '')
-          );
-          if (captionMenuBtn) {
-            console.log('[VACFA Bot] Clicking "Turn on live captions" in Teams menu...');
-            captionMenuBtn.click();
-          } else {
-            // Close menu if not found
-            document.body.click();
-          }
-        }, 500);
-      }
-    }
-
-    turnOnCaptions();
-    // Re-check after 8 seconds in case meeting was still spinning up
-    setTimeout(turnOnCaptions, 8000);
-
-    // Harvest captions across all attendees
-    let lastFlushedText = '';
-    let lastFlushedSpeaker = '';
-    let activeSentence = '';
-    let activeSpeaker = '';
-    let flushTimer = null;
-
-    function flushUtterance() {
-      const clean = activeSentence.trim();
-      const speaker = activeSpeaker.trim() || 'Speaker';
-      activeSentence = '';
-      activeSpeaker = '';
-
-      if (!clean || clean.length < 3) return;
-      if (speaker === "${BOT_NAME}") return; // Skip bot's own captions
-      if (clean === lastFlushedText && speaker === lastFlushedSpeaker) return;
-
-      lastFlushedText = clean;
-      lastFlushedSpeaker = speaker;
-
-      console.log('[VACFA_HEARD_SPEECH]', JSON.stringify({
-        speaker: speaker,
-        text: clean,
-        timestamp: Date.now(),
-      }));
-    }
-
-    function processCaptionNode(node) {
-      if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
-
-      // Extract speaker name
-      const speakerEl = node.querySelector(
-        '[data-tid="closed-caption-speaker"], [class*="speaker"], [class*="author"], strong, [data-tid="author"]'
-      );
-      // Extract caption text
-      const textEl = node.querySelector(
-        '[data-tid="closed-caption-text"], [class*="caption-text"], [class*="message"], [class*="text"]'
-      );
-
-      let text = (textEl ? textEl.textContent : node.textContent || '').trim();
-      let speaker = (speakerEl ? speakerEl.textContent : '').replace(/[:：]$/, '').trim();
-
-      // If text contains "Speaker: Message" pattern
-      if (!speaker && text.includes(':')) {
-        const parts = text.split(':');
-        speaker = parts[0].trim();
-        text = parts.slice(1).join(':').trim();
-      }
-
-      if (!text) return;
-      if (speaker === "${BOT_NAME}") return;
-
-      if (!speaker && window.__VACFA_CURRENT_SPEAKER__) {
-        speaker = window.__VACFA_CURRENT_SPEAKER__;
-      }
-
-      activeSpeaker = speaker || 'Meeting Speaker';
-      activeSentence = text;
-
-      if (flushTimer) clearTimeout(flushTimer);
-      // Buffer by 750ms: when the speaker pauses, finalize sentence
-      flushTimer = setTimeout(flushUtterance, 750);
-    }
-
-    // Observe document for closed captions
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const addedNode of mutation.addedNodes) {
-          if (addedNode.nodeType === Node.ELEMENT_NODE) {
-            const el = addedNode;
-            // Check if this element or its container is a caption item
-            if (
-              el.matches && (
-                el.matches('[data-tid*="caption"], [class*="caption"], [role="log"] *, [aria-live="polite"] *') ||
-                el.querySelector('[data-tid*="caption"], [class*="caption"]')
-              )
-            ) {
-              processCaptionNode(el);
-            }
-          }
-        }
-      }
+  /* ---- Hook RTCPeerConnection ---- */
+  const OrigPC=window.RTCPeerConnection;
+  window.RTCPeerConnection=function(...a){
+    const pc=new OrigPC(...a);
+    pc.addEventListener('track',(ev)=>{
+      if(ev.track.kind!=='audio')return;
+      if(seenTracks.has(ev.track.id))return;
+      seenTracks.add(ev.track.id);
+      console.log(LOG,'Got remote audio track',ev.track.id);
+      const stream=ev.streams[0]||new MediaStream([ev.track]);
+      if(!captureActive){ captureActive=true; startCapture(stream); }
     });
+    return pc;
+  };
+  window.RTCPeerConnection.prototype=OrigPC.prototype;
+  Object.setPrototypeOf(window.RTCPeerConnection,OrigPC);
 
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  /* ---- Hook HTMLMediaElement.srcObject ---- */
+  try{
+    const desc=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'srcObject');
+    if(desc){
+      Object.defineProperty(HTMLMediaElement.prototype,'srcObject',{
+        set(s){
+          if(s instanceof MediaStream){
+            for(const t of s.getAudioTracks()){
+              if(!seenTracks.has(t.id)){
+                seenTracks.add(t.id);
+                console.log(LOG,'Got media element audio track',t.id);
+                if(!captureActive){ captureActive=true; startCapture(s); }
+              }
+            }
+          }
+          return desc.set.call(this,s);
+        },
+        get(){return desc.get.call(this);}
+      });
+    }
+  }catch(e){console.warn(LOG,'srcObject hook failed',e);}
 
-    // Fallback polling: scan existing caption containers every 600ms
-    setInterval(() => {
-      const captionItems = document.querySelectorAll(
-        '[data-tid="closed-caption-item"], div[class*="caption-item"], [data-tid="closed-captions-renderer"] > div, div[class*="closed-caption"]'
-      );
-      if (captionItems.length > 0) {
-        const latest = captionItems[captionItems.length - 1];
-        processCaptionNode(latest);
-      }
-    }, 600);
-  }
+  /* ---- Audio capture pipeline ---- */
+  function startCapture(stream){
+    console.log(LOG,'Starting audio capture pipeline');
+    const ctx=new AudioContext({sampleRate:48000});
+    ctx.resume().catch(()=>{});
 
-  // Step 3: Active speaker video tile monitor (tracks speaker names from video streams)
-  function startActiveSpeakerMonitor() {
-    setInterval(() => {
-      const activeSpeakerEl = document.querySelector(
-        '[data-tid="calling-active-speaker"] [data-tid="participant-name"], ' +
-        '[data-tid="participant-stream"][aria-label*="speaking" i], ' +
-        'div[aria-label*="is speaking" i]'
-      );
+    const src=ctx.createMediaStreamSource(stream);
 
-      if (activeSpeakerEl) {
-        const speakerName = (activeSpeakerEl.textContent || activeSpeakerEl.getAttribute('aria-label') || '')
-          .replace(/is speaking/gi, '')
-          .trim();
+    /* Voice Activity Detector via AnalyserNode */
+    const analyser=ctx.createAnalyser();
+    analyser.fftSize=2048;
+    src.connect(analyser);
 
-        if (speakerName && speakerName !== "${BOT_NAME}") {
-          window.__VACFA_CURRENT_SPEAKER__ = speakerName;
-        }
-      }
-    }, 500);
-  }
+    /* Keep audio audible in the tab (don't mute the meeting) */
+    src.connect(ctx.destination);
 
-  // Step 4: Post Welcome & Translation URLs into Teams Meeting Chat (with retry loop)
-  function initChatAnnouncementLoop() {
-    let announcementAttempts = 0;
-    const chatInterval = setInterval(() => {
-      if (window.__VACFA_CHAT_ANNOUNCED__ || announcementAttempts > 15) {
-        clearInterval(chatInterval);
+    let peakLevel=0;
+    const vadBuf=new Uint8Array(analyser.frequencyBinCount);
+    setInterval(()=>{
+      analyser.getByteTimeDomainData(vadBuf);
+      let mx=0;
+      for(let i=0;i<vadBuf.length;i++){const v=Math.abs(vadBuf[i]-128);if(v>mx)mx=v;}
+      peakLevel=mx;
+    },80);
+
+    /* MediaRecorder loop: 3.5s segments */
+    const SEGMENT_MS=3500;
+    function recordSegment(){
+      if(!stream.active){console.warn(LOG,'Stream no longer active');return;}
+      let voiceDetected=false;
+      const vad=setInterval(()=>{if(peakLevel>4)voiceDetected=true;},80);
+
+      let recorder;
+      try{
+        const recStream=new MediaStream(stream.getAudioTracks());
+        recorder=new MediaRecorder(recStream,{mimeType:'audio/webm;codecs=opus'});
+      }catch(e){
+        console.error(LOG,'MediaRecorder init failed',e);
+        clearInterval(vad);
+        setTimeout(recordSegment,2000);
         return;
       }
-      announcementAttempts++;
 
-      const chatBtn = document.querySelector(
-        'button[data-tid="chat-button"], button#chat-button, button[aria-label*="chat" i], button[aria-label*="conversation" i]'
-      );
+      const chunks=[];
+      recorder.ondataavailable=(e)=>{if(e.data.size>0)chunks.push(e.data);};
 
-      if (chatBtn) {
-        const chatPane = document.querySelector('div[data-tid="chat-pane"], div[aria-label*="Meeting chat" i]');
-        if (!chatPane) {
-          console.log('[VACFA Bot] Opening Teams chat pane...');
-          chatBtn.click();
-        }
-
-        setTimeout(() => {
-          const chatInput = document.querySelector(
-            'div[data-tid="ckeditor-message-input"], div[contenteditable="true"][role="textbox"], div[aria-label*="Type a message" i]'
-          );
-
-          if (chatInput && !window.__VACFA_CHAT_ANNOUNCED__) {
-            window.__VACFA_CHAT_ANNOUNCED__ = true;
-            chatInput.focus();
-            const announcement = "${CHAT_ANNOUNCEMENT}";
-
-            try {
-              document.execCommand('insertText', false, announcement);
-            } catch {
-              chatInput.innerText = announcement;
-            }
-            chatInput.dispatchEvent(new Event('input', { bubbles: true }));
-
-            setTimeout(() => {
-              const sendBtn = document.querySelector(
-                'button[data-tid="send-message-button"], button#send-message-button, button[aria-label*="Send" i]'
-              );
-              if (sendBtn && !sendBtn.disabled) {
-                console.log('[VACFA Bot] Posting translation link into Teams meeting chat...');
-                sendBtn.click();
-              } else {
-                chatInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+      recorder.onstop=async()=>{
+        clearInterval(vad);
+        if(voiceDetected&&chunks.length>0){
+          try{
+            const blob=new Blob(chunks,{type:'audio/webm'});
+            if(blob.size>500){
+              const buf=await blob.arrayBuffer();
+              const bytes=new Uint8Array(buf);
+              let binary='';
+              const SZ=8192;
+              for(let i=0;i<bytes.length;i+=SZ){
+                binary+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(i+SZ,bytes.length)));
               }
-            }, 800);
-          }
-        }, 1500);
-      }
-    }, 3000);
+              const b64=btoa(binary);
+              if(window.vacfaAudioChunk){
+                window.vacfaAudioChunk(b64);
+              }
+            }
+          }catch(e){console.error(LOG,'Chunk encode error',e);}
+        }
+        setTimeout(recordSegment,50);
+      };
+
+      recorder.onerror=(e)=>{
+        console.error(LOG,'MediaRecorder error',e);
+        clearInterval(vad);
+        setTimeout(recordSegment,1000);
+      };
+
+      recorder.start();
+      setTimeout(()=>{
+        if(recorder.state==='recording')recorder.stop();
+      },SEGMENT_MS);
+    }
+
+    /* Wait for AudioContext to be running */
+    function waitAndStart(){
+      if(ctx.state==='running'){recordSegment();}
+      else{ctx.resume().then(()=>recordSegment()).catch(()=>setTimeout(waitAndStart,500));}
+    }
+    setTimeout(waitAndStart,2000);
   }
 })();
 `;
 
+/**
+ * Script B — Pre-Join Automation
+ *
+ * Handles the Teams pre-join lobby: sets name, mutes mic/cam, clicks Join.
+ */
+const PRE_JOIN_SCRIPT = `
+(function(){
+  if(!location.href.includes('teams.microsoft.com')&&!location.href.includes('teams.live.com'))return;
+  if(window.__VACFA_PREJOIN__)return;
+  window.__VACFA_PREJOIN__=true;
+
+  const BOT_NAME="${BOT_NAME}";
+  const CHAT_MSG="${CHAT_ANNOUNCEMENT.replace(/"/g, '\\"')}";
+  let joinedMeeting=false;
+
+  function handlePreJoin(){
+    /* "Continue on this browser" */
+    const contBtn=Array.from(document.querySelectorAll('button,a')).find(el=>
+      /continue on this browser/i.test(el.textContent||'')||el.getAttribute('data-tid')==='joinOnWeb'
+    );
+    if(contBtn){contBtn.click();return;}
+
+    /* Name input */
+    const nameIn=document.querySelector('input[data-tid="prejoin-display-name-input"],input[placeholder*="name" i],input[aria-label*="name" i]');
+    if(nameIn&&nameIn.value!==BOT_NAME){
+      nameIn.focus();
+      nameIn.value=BOT_NAME;
+      nameIn.dispatchEvent(new Event('input',{bubbles:true}));
+      nameIn.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+
+    /* Mute mic */
+    const micBtn=document.querySelector('button[data-tid="toggle-mute"],button[aria-label*="microphone" i]');
+    if(micBtn&&micBtn.getAttribute('aria-checked')==='true')micBtn.click();
+
+    /* Turn off camera */
+    const camBtn=document.querySelector('button[data-tid="toggle-video"],button[aria-label*="camera" i]');
+    if(camBtn&&camBtn.getAttribute('aria-checked')==='true')camBtn.click();
+
+    /* Click "Join now" */
+    const joinBtn=document.querySelector('button[data-tid="prejoin-join-button"],button#prejoin-join-button');
+    if(joinBtn&&!joinBtn.disabled){joinBtn.click();}
+  }
+
+  /* Detect meeting joined */
+  function checkInMeeting(){
+    return !!document.querySelector(
+      'div[data-tid="calling-active-speaker"],div[data-tid="participant-stream"],' +
+      'button[data-tid="calling-more-actions"],div[data-tid="calling-roster-section"]'
+    );
+  }
+
+  const iv=setInterval(()=>{
+    if(!joinedMeeting){
+      handlePreJoin();
+      if(checkInMeeting()){
+        joinedMeeting=true;
+        console.log('[VACFA Bot] Inside meeting — audio capture should be active');
+        enableCaptions();
+        setTimeout(postChatAnnouncement,6000);
+      }
+    }
+  },1200);
+
+  /* Enable live captions via Ctrl+Shift+C */
+  function enableCaptions(){
+    document.dispatchEvent(new KeyboardEvent('keydown',{
+      key:'C',code:'KeyC',keyCode:67,which:67,ctrlKey:true,shiftKey:true,bubbles:true
+    }));
+    /* Also try the menu route */
+    setTimeout(()=>{
+      const more=document.querySelector('button[data-tid="calling-more-actions"],button[aria-label*="More" i]');
+      if(more){
+        more.click();
+        setTimeout(()=>{
+          const capBtn=Array.from(document.querySelectorAll('button,div,li,span')).find(el=>
+            /turn on live captions|enable.*captions/i.test(el.textContent||'')||
+            el.getAttribute('data-tid')==='captions-menu-item'
+          );
+          if(capBtn)capBtn.click(); else document.body.click();
+        },600);
+      }
+    },3000);
+  }
+
+  /* Post translation link in Teams chat */
+  function postChatAnnouncement(){
+    if(window.__VACFA_CHAT_SENT__)return;
+    const chatBtn=document.querySelector('button[data-tid="chat-button"],button[aria-label*="chat" i]');
+    if(!chatBtn)return;
+    const pane=document.querySelector('div[data-tid="chat-pane"]');
+    if(!pane)chatBtn.click();
+    setTimeout(()=>{
+      const input=document.querySelector('div[contenteditable="true"][role="textbox"],div[aria-label*="Type a message" i]');
+      if(input&&!window.__VACFA_CHAT_SENT__){
+        window.__VACFA_CHAT_SENT__=true;
+        input.focus();
+        try{document.execCommand('insertText',false,CHAT_MSG);}catch{input.innerText=CHAT_MSG;}
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+        setTimeout(()=>{
+          const send=document.querySelector('button[data-tid="send-message-button"],button[aria-label*="Send" i]');
+          if(send&&!send.disabled)send.click();
+          else input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));
+        },800);
+      }
+    },1500);
+  }
+})();
+`;
+
+/**
+ * Script C — Enhanced Caption Observer (fallback if RTC audio capture fails)
+ *
+ * Watches for Teams Live Captions DOM nodes across main document AND iframes.
+ * Uses Runtime.addBinding('vacfaSpeechData') for reliable IPC.
+ */
+const CAPTION_OBSERVER_SCRIPT = `
+(function(){
+  if(!location.href.includes('teams.microsoft.com')&&!location.href.includes('teams.live.com'))return;
+  if(window.__VACFA_CAPTION_OBS__)return;
+  window.__VACFA_CAPTION_OBS__=true;
+
+  const LOG='[VACFA Captions]';
+  let lastText='';
+  let lastTime=0;
+
+  function sendCaption(speaker,text){
+    const now=Date.now();
+    const clean=text.trim();
+    if(!clean||clean.length<3)return;
+    if(clean===lastText&&now-lastTime<4000)return;
+    lastText=clean; lastTime=now;
+    if(window.vacfaSpeechData){
+      window.vacfaSpeechData(JSON.stringify({speaker:speaker||'Speaker',text:clean,ts:now}));
+    }
+  }
+
+  /* Broad selector set for captions */
+  const CAPTION_SELECTORS=[
+    '[data-tid*="caption"]',
+    '[class*="caption"]',
+    '[class*="Caption"]',
+    '[class*="closedCaption"]',
+    '[class*="closed-caption"]',
+    '[role="log"]',
+    '[aria-live="polite"]',
+    '[aria-live="assertive"]',
+  ].join(',');
+
+  function extractCaptionText(node){
+    if(!node||node.nodeType!==1)return null;
+    const speakerEl=node.querySelector('[data-tid*="speaker"],[class*="speaker"],[class*="author"],strong');
+    const textEl=node.querySelector('[data-tid*="text"],[class*="text"],[class*="message"]');
+    let text=(textEl?textEl.textContent:node.textContent||'').trim();
+    let speaker=(speakerEl?speakerEl.textContent:'').replace(/[:：]$/,'').trim();
+    if(!speaker&&text.includes(':')){
+      const p=text.indexOf(':');
+      speaker=text.slice(0,p).trim();
+      text=text.slice(p+1).trim();
+    }
+    if(!text||text.length<2)return null;
+    return{speaker,text};
+  }
+
+  /* Observe a document context */
+  function observeDoc(doc,label){
+    try{
+      const obs=new MutationObserver((muts)=>{
+        for(const m of muts){
+          /* Check added nodes */
+          for(const n of m.addedNodes){
+            if(n.nodeType!==1)continue;
+            if(n.matches&&n.matches(CAPTION_SELECTORS)){
+              const r=extractCaptionText(n);
+              if(r)sendCaption(r.speaker,r.text);
+            }
+            /* Check children */
+            try{
+              const kids=n.querySelectorAll(CAPTION_SELECTORS);
+              for(const k of kids){
+                const r=extractCaptionText(k);
+                if(r)sendCaption(r.speaker,r.text);
+              }
+            }catch{}
+          }
+          /* Character data changes (text edits within captions) */
+          if(m.type==='characterData'&&m.target.parentElement){
+            const parent=m.target.parentElement.closest(CAPTION_SELECTORS);
+            if(parent){
+              const r=extractCaptionText(parent);
+              if(r)sendCaption(r.speaker,r.text);
+            }
+          }
+        }
+      });
+
+      const target=doc.body||doc.documentElement;
+      if(target){
+        obs.observe(target,{childList:true,subtree:true,characterData:true});
+        console.log(LOG,'Observing',label);
+      }
+    }catch(e){console.warn(LOG,'observe error on',label,e);}
+  }
+
+  /* Wait for body, then observe */
+  function init(){
+    observeDoc(document,'main document');
+
+    /* Also observe all iframes (Teams may render captions inside iframes) */
+    function scanIframes(){
+      try{
+        const frames=document.querySelectorAll('iframe');
+        for(const f of frames){
+          try{
+            if(f.contentDocument&&!f.__VACFA_OBS__){
+              f.__VACFA_OBS__=true;
+              observeDoc(f.contentDocument,'iframe:'+f.src);
+            }
+          }catch{}
+        }
+      }catch{}
+    }
+    scanIframes();
+    setInterval(scanIframes,3000);
+
+    /* Polling fallback: scan existing captions every 800ms */
+    setInterval(()=>{
+      try{
+        const nodes=document.querySelectorAll(CAPTION_SELECTORS);
+        if(nodes.length>0){
+          const last=nodes[nodes.length-1];
+          const r=extractCaptionText(last);
+          if(r)sendCaption(r.speaker,r.text);
+        }
+      }catch{}
+    },800);
+  }
+
+  if(document.body)init();
+  else document.addEventListener('DOMContentLoaded',init);
+})();
+`;
+
 // ============================================================================
-// 6. Main Orchestrator & Chrome DevTools Protocol Bridge
+// 8. Main Orchestrator
 // ============================================================================
 async function main() {
   const browserBin = findBrowser();
   if (!browserBin) {
-    console.error('[VACFA Bot] Error: Neither Google Chrome nor Microsoft Edge was found on this system.');
+    console.error('[Bot] No Chrome or Edge found on this system.');
     process.exit(1);
   }
 
-  const browserName = browserBin.toLowerCase().includes('edge') ? 'Microsoft Edge' : 'Google Chrome';
-  console.log(`[VACFA Bot] Detected browser engine: ${browserName}`);
-  console.log(`[VACFA Bot] Binary path: ${browserBin}`);
+  const browserName = browserBin.toLowerCase().includes('edge') ? 'Edge' : 'Chrome';
+  console.log(`[Bot] Using ${browserName}: ${browserBin}`);
 
   const profileDir = path.join(os.homedir(), '.gemini', 'antigravity', 'teams-bot-profile');
-  if (!fs.existsSync(profileDir)) {
-    fs.mkdirSync(profileDir, { recursive: true });
-  }
+  if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
 
+  // Launch Chrome with about:blank — we navigate AFTER CDP scripts are injected
   const browserArgs = [
     '--no-first-run',
     '--no-default-browser-check',
@@ -679,192 +766,250 @@ async function main() {
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     '--remote-allow-origins=*',
-    MEETING_URL,
+    'about:blank',
   ];
 
-  console.log(`[VACFA Bot] Launching ${browserName} with WebRTC auto-join flags...`);
-  const browserProcess = spawn(browserBin, browserArgs, {
-    detached: false,
-    stdio: 'ignore',
-  });
+  console.log('[Bot] Launching browser (about:blank → setup → navigate to meeting)...');
+  const browserProcess = spawn(browserBin, browserArgs, { detached: false, stdio: 'ignore' });
+  browserProcess.on('error', (e) => console.error('[Bot] Browser spawn error:', e.message));
+  browserProcess.on('exit', (code) => { console.log(`[Bot] Browser exited (code ${code})`); process.exit(0); });
 
-  browserProcess.on('error', (err) => {
-    console.error('[VACFA Bot] Failed to launch browser process:', err.message);
-  });
+  // ---- CDP Connection Loop ----
+  const WebSocketClient = require('ws');
 
-  browserProcess.on('exit', (code) => {
-    console.log(`[VACFA Bot] Browser process exited with code ${code}.`);
-    process.exit(0);
-  });
-
-  // Verify CART connectivity if URL provided
-  if (CART_URL) {
-    setTimeout(async () => {
-      console.log('[VACFA Bot] Checking Teams CART caption status...');
-      const ok = await sendCartCaption(CART_URL, 'VACFA AI Interpreter connected to Teams captions banner.');
-      if (ok) {
-        console.log('[VACFA Bot] CART Endpoint: ACTIVE (Captions successfully delivering into Teams)');
-      } else {
-        console.log('[VACFA Bot] Note: CART endpoint waiting for meeting to start or organizer approval.');
-      }
-    }, 3000);
+  /** Fetch JSON from CDP endpoint. */
+  function cdpFetch(urlPath) {
+    return new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${DEBUG_PORT}${urlPath}`, (res) => {
+        let d = '';
+        res.on('data', (c) => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve([]); } });
+      }).on('error', reject);
+    });
   }
 
-  // Connect to Chrome DevTools Protocol
-  async function attachCDP() {
-    let attempts = 0;
-    const WebSocketClient = require('ws');
-
-    while (true) {
-      attempts++;
-      await new Promise((r) => setTimeout(r, 1000));
-
-      try {
-        const pages = await new Promise((resolve, reject) => {
-          http.get(`http://127.0.0.1:${DEBUG_PORT}/json`, (res) => {
-            let data = '';
-            res.on('data', (c) => (data += c));
-            res.on('end', () => {
-              try {
-                resolve(JSON.parse(data));
-              } catch {
-                resolve([]);
-              }
-            });
-          }).on('error', reject);
-        });
-
-        const teamsPage = pages.find((p) => p.type === 'page' && p.url.includes('teams.microsoft.com'));
-        if (teamsPage && teamsPage.webSocketDebuggerUrl) {
-          console.log(`[VACFA Bot] Connected to Teams browser page via CDP.`);
-
-          const ws = new WebSocketClient(teamsPage.webSocketDebuggerUrl);
-
-          ws.on('open', () => {
-            console.log('[VACFA Bot] CDP WebSocket stream established.');
-
-            // Enable Runtime, Page, and Input
-            ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable' }));
-            ws.send(JSON.stringify({ id: 2, method: 'Page.enable' }));
-
-            // Trigger Ctrl+Shift+C via CDP hardware key event to ensure Live Captions are toggled
-            setTimeout(() => {
-              console.log('[VACFA Bot] Dispatching Ctrl+Shift+C hotkey to activate Teams Live Captions...');
-              ws.send(JSON.stringify({
-                id: 101,
-                method: 'Input.dispatchKeyEvent',
-                params: {
-                  type: 'rawKeyDown',
-                  windowsVirtualKeyCode: 67,
-                  modifiers: 10,
-                  code: 'KeyC',
-                  key: 'C',
-                },
-              }));
-              ws.send(JSON.stringify({
-                id: 102,
-                method: 'Input.dispatchKeyEvent',
-                params: {
-                  type: 'keyUp',
-                  windowsVirtualKeyCode: 67,
-                  modifiers: 10,
-                  code: 'KeyC',
-                  key: 'C',
-                },
-              }));
-            }, 8000);
-
-            // Periodically ensure in-meeting controller script is active
-            const injectInterval = setInterval(() => {
-              ws.send(JSON.stringify({
-                id: 3,
-                method: 'Runtime.evaluate',
-                params: {
-                  expression: IN_MEETING_CONTROLLER_SCRIPT,
-                  returnByValue: false,
-                },
-              }));
-            }, 2500);
-
-              // Listen for console events from Teams client
-              ws.on('message', async (msg) => {
-                try {
-                  const ev = JSON.parse(msg.toString());
-                  if (ev.method === 'Runtime.consoleAPICalled') {
-                    const text = ev.params.args.map((a) => a.value || a.description || '').join(' ');
-
-                    if (text.includes('[VACFA_HEARD_SPEECH]')) {
-                      const jsonPart = text.replace(/.*\[VACFA_HEARD_SPEECH\]\s*/, '').trim();
-                      try {
-                        const payload = JSON.parse(jsonPart);
-                        const { speaker, text: spokenText } = payload;
-
-                        console.log(`\n🎙️  [Teams Speaker: ${speaker}]: "${spokenText}"`);
-
-                        // 1. Instant sub-second translation via Gemini 3.8 Flash
-                        const translationResult = await translateUtterance(spokenText, speaker);
-
-                        console.log(`🌍  [Gemini AI (${translationResult.provider})]:`);
-                        console.log(`    🇫🇷 FR: "${translationResult.translations.fr}"`);
-                        console.log(`    🇵🇹 PT: "${translationResult.translations.pt}"`);
-                        console.log(`    🇹🇿 SW: "${translationResult.translations.sw}"`);
-
-                        const captionEntry = {
-                          id: `teams-bot-${Date.now()}`,
-                          speaker: `${speaker} (${translationResult.sourceLang.toUpperCase()})`,
-                          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-                          originalText: spokenText,
-                          translations: translationResult.translations,
-                          glossaryTerms: translationResult.glossaryTerms,
-                        };
-
-                        // 2. Broadcast to VACFA Live Session App (GitHub Pages / local) via SSE
-                        broadcastToClients({ type: 'caption', caption: captionEntry });
-
-                        // 3. Deliver to Microsoft Teams CART Captions if configured
-                        if (CART_URL) {
-                          const cartLang = process.env.CART_LANGUAGE || 'fr';
-                          const cartSub = translationResult.translations[cartLang] || spokenText;
-                          await sendCartCaption(CART_URL, cartSub, `${speaker} (${cartLang.toUpperCase()})`);
-                        }
-                      } catch (parseErr) {
-                        console.error('[VACFA Bot] Error parsing speech JSON:', parseErr.message);
-                      }
-                    } else if (text.includes('[VACFA')) {
-                      console.log(text);
-                    }
-                  }
-                } catch {}
-              });
-
-              ws.on('close', () => {
-                clearInterval(injectInterval);
-              });
-            });
-
-            return;
-          }
-        } catch (err) {
-          // Retrying connection
-        }
+  // Wait for CDP to be available
+  let wsUrl = null;
+  for (let attempt = 1; ; attempt++) {
+    await new Promise((r) => setTimeout(r, 800));
+    try {
+      const pages = await cdpFetch('/json');
+      const page = pages.find((p) => p.type === 'page');
+      if (page?.webSocketDebuggerUrl) {
+        wsUrl = page.webSocketDebuggerUrl;
+        break;
       }
+    } catch { /* retry */ }
+    if (attempt % 10 === 0) console.log(`[Bot] Waiting for CDP... (attempt ${attempt})`);
+  }
 
-      console.log('[VACFA Bot] Browser running. Teams window open on screen.');
+  console.log('[Bot] CDP available — setting up interceptors...');
+
+  // ---- CDP WebSocket ----
+  const ws = new WebSocketClient(wsUrl);
+  let cmdId = 0;
+  const pending = new Map();
+
+  /** Send a CDP command and await its response. */
+  function cdpSend(method, params = {}) {
+    const id = ++cmdId;
+    return new Promise((resolve) => {
+      pending.set(id, resolve);
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  // Deduplication state for captions
+  let lastBroadcastText = '';
+  let lastBroadcastTime = 0;
+  let processingAudio = false;
+
+  ws.on('open', async () => {
+    console.log('[Bot] CDP WebSocket connected');
+
+    // 1. Enable domains
+    await cdpSend('Page.enable');
+    await cdpSend('Runtime.enable');
+
+    // 2. *** KEY FIX *** Bypass ALL Content Security Policy (fixes WASM workers + Trusted Types)
+    await cdpSend('Page.setBypassCSP', { enabled: true });
+    console.log('[Bot] ✅ Page.setBypassCSP enabled — Trusted Types / WASM blocks eliminated');
+
+    // 3. Create bindings for browser → Node.js IPC
+    await cdpSend('Runtime.addBinding', { name: 'vacfaAudioChunk' });
+    await cdpSend('Runtime.addBinding', { name: 'vacfaSpeechData' });
+    console.log('[Bot] ✅ Runtime bindings registered (vacfaAudioChunk, vacfaSpeechData)');
+
+    // 4. Inject scripts that execute BEFORE any page JS loads
+    await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: AUDIO_INTERCEPTOR_SCRIPT });
+    await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: PRE_JOIN_SCRIPT });
+    await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: CAPTION_OBSERVER_SCRIPT });
+    console.log('[Bot] ✅ Interceptor scripts registered (will fire on Teams page load)');
+
+    // 5. Navigate to the meeting
+    console.log(`[Bot] Navigating to meeting: ${MEETING_URL}`);
+    await cdpSend('Page.navigate', { url: MEETING_URL });
+
+    // 6. Also dispatch Ctrl+Shift+C after a delay to toggle Live Captions via CDP
+    setTimeout(async () => {
+      try {
+        await cdpSend('Input.dispatchKeyEvent', {
+          type: 'rawKeyDown',
+          windowsVirtualKeyCode: 67,
+          modifiers: 10, // Ctrl=2 + Shift=8
+          code: 'KeyC',
+          key: 'C',
+        });
+        await cdpSend('Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          windowsVirtualKeyCode: 67,
+          modifiers: 10,
+          code: 'KeyC',
+          key: 'C',
+        });
+        console.log('[Bot] Dispatched Ctrl+Shift+C to toggle Live Captions');
+      } catch { /* non-critical */ }
+    }, 15000);
+
+    // 7. CART connectivity check
+    if (CART_URL) {
+      setTimeout(async () => {
+        const ok = await sendCartCaption(CART_URL, 'VACFA AI Interpreter connected.');
+        console.log(`[Bot] CART endpoint: ${ok ? 'ACTIVE' : 'waiting'}`);
+      }, 5000);
+    }
+  });
+
+  // ---- Handle CDP messages ----
+  ws.on('message', async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    // Resolve pending command promises
+    if (msg.id && pending.has(msg.id)) {
+      pending.get(msg.id)(msg);
+      pending.delete(msg.id);
     }
 
-  attachCDP();
+    // ---- AUDIO CHUNK received from browser ----
+    if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === 'vacfaAudioChunk') {
+      const b64 = msg.params.payload;
+      if (!b64 || b64.length < 100) return; // Too small, skip
 
-  console.log(`\n=============================================================================`);
-  console.log(`  VACFA Bot Status: RUNNING & LISTENING`);
-  console.log(`  1. The browser window has opened to your Teams meeting.`);
-  console.log(`  2. Display name will be pre-filled as "${BOT_NAME}".`);
-  console.log(`  3. In Teams, click Admit if the bot appears in the lobby.`);
-  console.log(`  4. Live Audio & Subtitles Relay Bridge:`);
-  console.log(`     http://127.0.0.1:${RELAY_PORT}/events`);
-  console.log(`  5. Live Session Web App for Attendees:`);
-  console.log(`     ${SESSION_URL}`);
-  console.log(`  Press Ctrl+C in this terminal to stop the bot.`);
-  console.log(`=============================================================================\n`);
+      // Rate-limit: only process one chunk at a time
+      if (processingAudio) {
+        return;
+      }
+      processingAudio = true;
+
+      try {
+        const sizeKB = Math.round(b64.length * 0.75 / 1024);
+        console.log(`\n🎤 [Audio] Received ${sizeKB}KB chunk — sending to Gemini for STT+translation...`);
+
+        const result = await transcribeAndTranslateAudio(b64);
+
+        if (result && result.transcript) {
+          // Dedup check
+          const now = Date.now();
+          if (result.transcript === lastBroadcastText && now - lastBroadcastTime < 5000) {
+            processingAudio = false;
+            return;
+          }
+          lastBroadcastText = result.transcript;
+          lastBroadcastTime = now;
+
+          const speaker = result.speaker || 'Meeting Speaker';
+          console.log(`🎙️  [${speaker}]: "${result.transcript}"`);
+          console.log(`🌍  Translations (${result._model}):`);
+          console.log(`    🇫🇷 FR: "${result.translations?.fr}"`);
+          console.log(`    🇵🇹 PT: "${result.translations?.pt}"`);
+          console.log(`    🇹🇿 SW: "${result.translations?.sw}"`);
+
+          const entry = {
+            id: `bot-audio-${Date.now()}`,
+            speaker: `${speaker} (${(result.detectedLanguage || 'en').toUpperCase()})`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            originalText: result.transcript,
+            translations: result.translations || {},
+            glossaryTerms: result.detectedGlossaryTerms || [],
+          };
+
+          broadcastToClients({ type: 'caption', caption: entry });
+
+          if (CART_URL) {
+            const cartLang = process.env.CART_LANGUAGE || 'fr';
+            const cartText = result.translations?.[cartLang] || result.transcript;
+            sendCartCaption(CART_URL, cartText, speaker).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.error('[Bot] Audio processing error:', err.message);
+      }
+      processingAudio = false;
+    }
+
+    // ---- CAPTION TEXT received from DOM observer (fallback) ----
+    if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === 'vacfaSpeechData') {
+      try {
+        const data = JSON.parse(msg.params.payload);
+        const { speaker, text } = data;
+        if (!text || text.length < 3) return;
+
+        // Dedup
+        const now = Date.now();
+        if (text === lastBroadcastText && now - lastBroadcastTime < 4000) return;
+        lastBroadcastText = text;
+        lastBroadcastTime = now;
+
+        console.log(`\n📝 [Captions Fallback] ${speaker}: "${text}"`);
+        const tr = await translateText(text, speaker);
+
+        const entry = {
+          id: `bot-cap-${Date.now()}`,
+          speaker: `${speaker} (${tr.sourceLang.toUpperCase()})`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          originalText: text,
+          translations: tr.translations,
+          glossaryTerms: tr.glossaryTerms,
+        };
+
+        broadcastToClients({ type: 'caption', caption: entry });
+
+        if (CART_URL) {
+          const cartLang = process.env.CART_LANGUAGE || 'fr';
+          sendCartCaption(CART_URL, tr.translations[cartLang] || text, speaker).catch(() => {});
+        }
+      } catch (e) {
+        console.error('[Bot] Caption parse error:', e.message);
+      }
+    }
+
+    // ---- Console API (informational logging from injected scripts) ----
+    if (msg.method === 'Runtime.consoleAPICalled') {
+      const text = msg.params?.args?.map((a) => a.value || a.description || '').join(' ');
+      if (text.includes('[VACFA')) console.log(text);
+    }
+  });
+
+  ws.on('close', () => { console.log('[Bot] CDP connection closed'); });
+  ws.on('error', (e) => { console.error('[Bot] CDP error:', e.message); });
+
+  // ---- Status Banner ----
+  console.log('\n' + '='.repeat(77));
+  console.log('  VACFA Bot v2: RUNNING');
+  console.log('  Architecture: WebRTC Audio Intercept → Gemini STT → Translation → Broadcast');
+  console.log('');
+  console.log('  What happens now:');
+  console.log('  1. Browser opens to about:blank, then navigates to the Teams meeting.');
+  console.log('  2. CSP is bypassed — WASM audio workers will load correctly.');
+  console.log('  3. RTCPeerConnection interceptor captures ALL participants\' audio.');
+  console.log('  4. Audio chunks (3.5s) are transcribed + translated by Gemini.');
+  console.log('  5. Results broadcast to VACFA web app via WebSocket/SSE.');
+  console.log('');
+  console.log(`  Relay : ws://127.0.0.1:${RELAY_PORT}`);
+  console.log(`  Session: ${SESSION_URL}`);
+  console.log(`  Press Ctrl+C to stop.`);
+  console.log('='.repeat(77) + '\n');
 }
 
 main().catch(console.error);

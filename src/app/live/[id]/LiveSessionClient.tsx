@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Bot,
   Play,
+  Headphones,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Session, CaptionEntry, GlossaryTerm } from '@/lib/types';
@@ -143,6 +144,175 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       ttsRef.current.speak(translated, audioLang);
     },
     [audioLang, isAudioMuted]
+  );
+
+  // Channel selection prompt on initial session load
+  const [showChannelPrompt, setShowChannelPrompt] = useState(true);
+
+  // Auto-selects interpretation channel, un-mutes audio playback, and kicks off speech
+  const selectChannelAndUnmute = useCallback(
+    (langCode: string) => {
+      ttsRef.current?.stop();
+      setAudioLang(langCode);
+      setCaptionLang(langCode);
+      setIsAudioMuted(false);
+      unlockAudioPlayback();
+      setShowChannelPrompt(false);
+
+      playedCaptionIdsRef.current.clear();
+      if (captions.length > 0) {
+        const lastCap = captions[captions.length - 1];
+        playedCaptionIdsRef.current.add(lastCap.id);
+        const translated = lastCap.translations?.[langCode] || lastCap.originalText;
+        if (translated && translated !== '...') {
+          ttsRef.current?.speak(translated, langCode);
+        }
+      }
+    },
+    [captions]
+  );
+
+  const renderChannelPromptModal = () => (
+    <Modal
+      isOpen={showChannelPrompt}
+      onClose={() => setShowChannelPrompt(false)}
+      title="Select Interpretation Channel"
+      size="md"
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', padding: '0.5rem 0' }}>
+        <div style={{ textAlign: 'center', marginBottom: '0.25rem' }}>
+          <div
+            style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '50%',
+              background: 'rgba(196, 30, 58, 0.15)',
+              color: 'var(--vacfa-red)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 0.75rem',
+              border: '1px solid rgba(196, 30, 58, 0.3)',
+            }}
+          >
+            <Headphones size={24} />
+          </div>
+          <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600, color: 'var(--cream)' }}>
+            Welcome to {currentSession.name}
+          </h3>
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--grey-400)', lineHeight: 1.4 }}>
+            Choose your interpretation channel to begin listening live. Selecting a language automatically unmutes audio for your device.
+          </p>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+            gap: '0.75rem',
+            maxHeight: '340px',
+            overflowY: 'auto',
+            padding: '2px',
+          }}
+        >
+          {currentSession.languages.map((lang) => {
+            const isSelected = audioLang === lang.code;
+            return (
+              <button
+                key={lang.code}
+                type="button"
+                onClick={() => selectChannelAndUnmute(lang.code)}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: '0.35rem',
+                  padding: '0.9rem',
+                  borderRadius: '12px',
+                  border: isSelected
+                    ? '2px solid var(--vacfa-red)'
+                    : '1px solid rgba(255, 255, 255, 0.1)',
+                  background: isSelected
+                    ? 'rgba(196, 30, 58, 0.18)'
+                    : 'rgba(255, 255, 255, 0.04)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'all 0.18s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--vacfa-red)';
+                  e.currentTarget.style.background = 'rgba(196, 30, 58, 0.12)';
+                }}
+                onMouseLeave={(e) => {
+                  if (!isSelected) {
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                  }
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--cream)' }}>
+                    {lang.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '0.7rem',
+                      textTransform: 'uppercase',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      color: 'var(--grey-400)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {lang.code}
+                  </span>
+                </div>
+                {lang.nativeName && lang.nativeName !== lang.name && (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--grey-400)' }}>
+                    {lang.nativeName}
+                  </span>
+                )}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    marginTop: '0.25rem',
+                    fontSize: '0.78rem',
+                    color: 'var(--vacfa-red-light)',
+                    fontWeight: 500,
+                  }}
+                >
+                  <Volume2 size={13} /> Listen Live
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.25rem' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setIsAudioMuted(true);
+              setShowChannelPrompt(false);
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--grey-400)',
+              fontSize: '0.82rem',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              padding: '4px 8px',
+            }}
+          >
+            Silent captions only (keep muted)
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 
   // Setup Live Synchronization listener (receives events from other tabs / meeting bot)
@@ -453,20 +623,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                     key={lang.code}
                     className={`${styles.teamsLangChip} ${isActive ? styles.teamsLangChipActive : ''}`}
                     onClick={() => {
-                      if (audioLang === lang.code) return;
-                      ttsRef.current?.stop();
-                      setAudioLang(lang.code);
-                      setCaptionLang(lang.code);
-                      unlockAudioPlayback();
-                      playedCaptionIdsRef.current.clear();
-                      if (!isAudioMuted && captions.length > 0) {
-                        const lastCap = captions[captions.length - 1];
-                        playedCaptionIdsRef.current.add(lastCap.id);
-                        const translated = lastCap.translations?.[lang.code] || lastCap.originalText;
-                        if (translated && translated !== '...') {
-                          ttsRef.current?.speak(translated, lang.code);
-                        }
-                      }
+                      selectChannelAndUnmute(lang.code);
                     }}
                   >
                     {lang.code.toUpperCase()} • {lang.name}
@@ -575,6 +732,8 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
           onClose={() => setIsAiConfigOpen(false)}
           onConfigSaved={() => setHasApiKey(Boolean(getStoredApiKey()))}
         />
+
+        {renderChannelPromptModal()}
       </div>
     );
   }
@@ -839,20 +998,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   key={`audio-${lang.code}`}
                   className={`${styles.channelItem} ${isActive ? styles.channelActive : ''}`}
                   onClick={() => {
-                    if (audioLang === lang.code) return;
-                    // Instantly abort audio from previous language and dump queue
-                    ttsRef.current?.stop();
-                    setAudioLang(lang.code);
-                    unlockAudioPlayback();
-                    playedCaptionIdsRef.current.clear();
-                    if (!isAudioMuted && captions.length > 0) {
-                      const lastCap = captions[captions.length - 1];
-                      playedCaptionIdsRef.current.add(lastCap.id);
-                      const translated = lastCap.translations?.[lang.code] || lastCap.originalText;
-                      if (translated && translated !== '...') {
-                        ttsRef.current?.speak(translated, lang.code);
-                      }
-                    }
+                    selectChannelAndUnmute(lang.code);
                   }}
                 >
                   <div className={styles.channelInfo}>
@@ -1012,6 +1158,8 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
           setHasApiKey(Boolean(getStoredApiKey()));
         }}
       />
+
+      {renderChannelPromptModal()}
     </div>
   );
 }

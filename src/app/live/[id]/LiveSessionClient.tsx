@@ -88,17 +88,8 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const ttsRef = useRef<ReturnType<typeof createSpeechSynthesisController> | null>(null);
 
-  // Presenter Microphone state
-  const [isPresenterMicLive, setIsPresenterMicLive] = useState(false);
+  // Audio level state
   const [audioLevel, setAudioLevel] = useState(0);
-  const [micErrorMessage, setMicErrorMessage] = useState('');
-  const [floorLanguage, setFloorLanguage] = useState<'auto' | 'en' | 'fr' | 'pt' | 'sw'>('auto');
-  const speechRecognizerRef = useRef<ReturnType<typeof createSpeechRecognitionController> | null>(null);
-
-  const handleFloorLanguageChange = (lang: 'auto' | 'en' | 'fr' | 'pt' | 'sw') => {
-    setFloorLanguage(lang);
-    speechRecognizerRef.current?.setLanguage(lang === 'auto' ? 'en' : lang);
-  };
 
   // Live Captions state
   const [captions, setCaptions] = useState<CaptionEntry[]>([INITIAL_INSTRUCTION_CAPTION]);
@@ -154,101 +145,21 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     [audioLang, isAudioMuted]
   );
 
-  // Process a finalized sentence from the microphone
-  const handleFinalSpeech = useCallback(
-    async (finalTranscript: string) => {
-      if (!finalTranscript.trim()) return;
-
-      setPartialText('');
-      const initialSpeaker =
-        floorLanguage === 'auto' ? 'Presenter (Live)' : `Presenter (${floorLanguage.toUpperCase()})`;
-      setCurrentSpeaker(initialSpeaker);
-
-      const captionId = `live-cap-${Date.now()}`;
-      // 1. Instant Optimistic Render: Display the user's sentence immediately (0ms delay!)
-      const initialEntry: CaptionEntry = {
-        id: captionId,
-        speaker: initialSpeaker,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        originalText: finalTranscript,
-        translations: {
-          en: finalTranscript,
-          fr: '...',
-          pt: '...',
-          sw: '...',
-        },
-        glossaryTerms: [],
-      };
-
-      setCaptions((prev) => [...prev, initialEntry]);
-
-      // 2. Sub-second Gemini 2.0 Flash bidirectional translation
-      try {
-        const result = await translateText(
-          finalTranscript,
-          floorLanguage === 'auto' ? undefined : floorLanguage,
-          activeGlossary
-        );
-
-        const detectedLang = result.sourceLang || 'en';
-        const finalSpeaker = `Presenter (${detectedLang.toUpperCase()})`;
-
-        const updatedEntry: CaptionEntry = {
-          ...initialEntry,
-          speaker: finalSpeaker,
-          translations: result.translations,
-          glossaryTerms: result.glossaryTerms,
-        };
-
-        setCaptions((prev) => prev.map((c) => (c.id === captionId ? updatedEntry : c)));
-        broadcastCaptionFinal(updatedEntry);
-        playCaptionAudio(updatedEntry);
-
-        // Stream to Microsoft Teams CART API if configured
-        if (currentSession.meetingIntegration?.teamsCartUrl) {
-          const cartLang = currentSession.meetingIntegration.teamsCartLanguage || 'fr';
-          const translated = updatedEntry.translations?.[cartLang];
-          const isValid =
-            cartLang === 'en'
-              ? Boolean(updatedEntry.originalText?.trim())
-              : Boolean(translated && translated !== '...' && translated.trim());
-
-          if (isValid) {
-            const cartText = cartLang === 'en' ? updatedEntry.originalText : translated!;
-            sendTeamsCartCaption(currentSession.meetingIntegration.teamsCartUrl, cartText, {
-              speaker: `VACFA (${cartLang.toUpperCase()})`,
-            }).catch(() => {});
-          }
-        }
-      } catch (err: any) {
-        setMicErrorMessage('Translation error: ' + (err?.message || 'Unknown error'));
-      }
-    },
-    [activeGlossary, floorLanguage, playCaptionAudio, currentSession.meetingIntegration]
-  );
-
-  // Setup Live Synchronization listener (receives events from other tabs / presenter)
+  // Setup Live Synchronization listener (receives events from other tabs / meeting bot)
   useEffect(() => {
     const unsubscribe = subscribeToLiveSync({
       onCaptionFinal: (caption) => {
-        // If we are not the one actively broadcasting, accept external captions
-        if (!isPresenterMicLive) {
-          setCaptions((prev) => [...prev, caption]);
-          setPartialText('');
-          playCaptionAudio(caption);
-        }
+        setCaptions((prev) => [...prev, caption]);
+        setPartialText('');
+        playCaptionAudio(caption);
       },
       onCaptionInterim: ({ speaker, text }) => {
-        if (!isPresenterMicLive) {
-          setCurrentSpeaker(speaker);
-          setPartialText(text);
-        }
+        setCurrentSpeaker(speaker);
+        setPartialText(text);
       },
       onMicStatus: ({ isLive, audioLevel: level, speaker }) => {
-        if (!isPresenterMicLive) {
-          setAudioLevel(isLive ? level : 0);
-          if (isLive) setCurrentSpeaker(speaker);
-        }
+        setAudioLevel(isLive ? level : 0);
+        if (isLive) setCurrentSpeaker(speaker);
       },
       onGlossaryAdded: (newTerm) => {
         setActiveGlossary((prev) => [newTerm, ...prev]);
@@ -271,7 +182,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     });
 
     return () => unsubscribe();
-  }, [isPresenterMicLive, playCaptionAudio, audioLang, currentSession.languages]);
+  }, [playCaptionAudio, audioLang, currentSession.languages]);
 
   // Periodic heartbeat broadcast & listener count aggregation
   useEffect(() => {
@@ -406,70 +317,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     };
   }, [playCaptionAudio]);
 
-  // Setup Speech Recognition Controller
-  useEffect(() => {
-    const speakerLabel =
-      floorLanguage === 'auto' ? 'Presenter (Live)' : `Presenter (${floorLanguage.toUpperCase()})`;
-
-    const initialLangTag =
-      floorLanguage === 'auto'
-        ? 'en-ZA'
-        : floorLanguage === 'fr'
-        ? 'fr-FR'
-        : floorLanguage === 'pt'
-        ? 'pt-PT'
-        : floorLanguage === 'sw'
-        ? 'sw-KE'
-        : 'en-ZA';
-
-    const controller = createSpeechRecognitionController(
-      {
-        onInterimResult: (interim) => {
-          setPartialText(interim);
-          setCurrentSpeaker(speakerLabel);
-          broadcastCaptionInterim(speakerLabel, interim);
-        },
-        onFinalResult: (finalText) => {
-          handleFinalSpeech(finalText);
-        },
-        onAudioLevel: (level) => {
-          setAudioLevel(level);
-          broadcastMicStatus(true, speakerLabel, level);
-        },
-        onStateChange: (listening) => {
-          setIsPresenterMicLive(listening);
-          if (!listening) {
-            setAudioLevel(0);
-            broadcastMicStatus(false, '', 0);
-          }
-        },
-        onError: (err) => {
-          setMicErrorMessage(err);
-        },
-      },
-      initialLangTag
-    );
-
-    speechRecognizerRef.current = controller;
-
-    return () => {
-      controller.stop();
-    };
-  }, [floorLanguage, handleFinalSpeech]);
-
-  // Toggle Presenter Microphone
-  const togglePresenterMic = async () => {
-    setMicErrorMessage('');
-    if (isPresenterMicLive) {
-      speechRecognizerRef.current?.stop();
-    } else {
-      unlockAudioPlayback();
-      await speechRecognizerRef.current?.start();
-    }
-  };
-
   const handleLeave = () => {
-    speechRecognizerRef.current?.stop();
     ttsRef.current?.stop();
     router.push('/');
   };
@@ -688,15 +536,6 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
           >
             Suggest Term
           </Button>
-
-          <Button
-            variant={isPresenterMicLive ? 'primary' : 'outline'}
-            size="sm"
-            onClick={togglePresenterMic}
-            icon={isPresenterMicLive ? <Mic size={13} className="animate-pulse" /> : <MicOff size={13} />}
-          >
-            {isPresenterMicLive ? 'Mic Live' : 'Present'}
-          </Button>
         </div>
 
         {/* Modals */}
@@ -773,73 +612,35 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
             <p className={styles.code}>Code: {currentSession.sessionCode}</p>
           </div>
 
-          {/* Presenter Live Mic Broadcast Action */}
+          {/* Meeting Audio Feed Status */}
           <div style={{ marginBottom: '1.25rem' }}>
-            {isBotRelayConnected && !isPresenterMicLive && (
-              <div
-                style={{
-                  background: 'rgba(76, 175, 80, 0.1)',
-                  border: '1px solid rgba(76, 175, 80, 0.3)',
-                  borderRadius: '8px',
-                  padding: '6px 10px',
-                  marginBottom: '8px',
-                  fontSize: '0.75rem',
-                  color: 'var(--success)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-              >
-                <Bot size={13} className="animate-pulse" />
-                <span>Teams Bot is actively hearing and translating all meeting participants.</span>
-              </div>
-            )}
-            <button
-              onClick={togglePresenterMic}
+            <div
               style={{
-                width: '100%',
+                background: isBotRelayConnected ? 'rgba(76, 175, 80, 0.12)' : 'rgba(255, 255, 255, 0.05)',
+                border: `1px solid ${isBotRelayConnected ? 'rgba(76, 175, 80, 0.35)' : 'rgba(255, 255, 255, 0.12)'}`,
+                borderRadius: '10px',
+                padding: '10px 12px',
+                fontSize: '0.8rem',
+                color: isBotRelayConnected ? 'var(--success)' : 'var(--cream)',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
                 gap: '8px',
-                padding: '10px 14px',
-                borderRadius: '10px',
-                background: isPresenterMicLive ? 'var(--vacfa-red)' : 'rgba(255, 255, 255, 0.08)',
-                border: `1px solid ${isPresenterMicLive ? 'var(--vacfa-red)' : 'rgba(255, 255, 255, 0.15)'}`,
-                color: 'white',
-                fontWeight: 600,
-                fontSize: '0.9rem',
-                cursor: 'pointer',
-                boxShadow: isPresenterMicLive ? '0 0 15px rgba(196, 30, 58, 0.5)' : 'none',
-                transition: 'all 0.2s',
               }}
             >
-              {isPresenterMicLive ? (
-                <>
-                  <Mic size={18} className="animate-pulse" />
-                  <span>Presenter Mic: ON (Speaking)</span>
-                </>
-              ) : (
-                <>
-                  <MicOff size={18} />
-                  <span>Start Presenting (Live Mic)</span>
-                </>
-              )}
-            </button>
-            {micErrorMessage && (
-              <p style={{ color: 'var(--vacfa-red-light)', fontSize: '0.75rem', marginTop: '6px', lineHeight: 1.3 }}>
-                {micErrorMessage}
-              </p>
-            )}
+              <Bot size={16} className={isBotRelayConnected ? 'animate-pulse' : ''} />
+              <span style={{ fontWeight: 500 }}>
+                {isBotRelayConnected
+                  ? 'Meeting Audio Connected — Hearing all speakers live'
+                  : 'Meeting Audio Feed — Audio captured from meeting'}
+              </span>
+            </div>
           </div>
 
-          {/* Audio Waveform (reactive to actual mic volume or simulator) */}
+          {/* Audio Waveform */}
           <div className={styles.audioVisualizer}>
             {[...Array(5)].map((_, i) => {
               const baseHeights = [30, 60, 100, 70, 40];
-              const dynamicScale = isPresenterMicLive
-                ? Math.max(0.2, audioLevel * 2 * (1 - Math.abs(2 - i) * 0.2))
-                : 0.5;
+              const dynamicScale = isBotRelayConnected ? 0.65 : 0.35;
 
               return (
                 <div
@@ -848,13 +649,13 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   style={{
                     height: `${baseHeights[i]}%`,
                     transform: `scaleY(${dynamicScale})`,
-                    transition: 'transform 0.1s ease',
+                    transition: 'transform 0.15s ease',
                   }}
                 />
               );
             })}
             <span className="ml-2 text-sm text-vacfa-red-light font-medium">
-              {isPresenterMicLive ? 'Mic Broadcasting' : 'Audio Active'}
+              {isBotRelayConnected ? 'Meeting Audio Live' : 'Audio Feed Standby'}
             </span>
           </div>
         </div>
@@ -914,23 +715,14 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
             {captions.length === 0 && !partialText && (
               <div style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--grey-400)' }}>
                 <div style={{ display: 'inline-flex', padding: '16px', borderRadius: '50%', background: 'rgba(196, 30, 58, 0.12)', color: 'var(--vacfa-red-light)', marginBottom: '1rem' }}>
-                  <Mic size={32} />
+                  <Bot size={32} />
                 </div>
                 <h3 style={{ color: 'var(--white)', fontSize: '1.15rem', marginBottom: '0.5rem' }}>
-                  Waiting for Audio Feed
+                  Waiting for Meeting Audio
                 </h3>
-                <p style={{ maxWidth: '440px', margin: '0 auto 1.5rem', fontSize: '0.85rem', lineHeight: 1.5 }}>
-                  Click below to activate your microphone or inject sample conference speech to test the live translation channels.
+                <p style={{ maxWidth: '440px', margin: '0 auto', fontSize: '0.85rem', lineHeight: 1.5 }}>
+                  Meeting audio will stream here automatically once attendees or speakers talk in the meeting.
                 </p>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <Button
-                    variant="primary"
-                    icon={<Mic size={15} />}
-                    onClick={togglePresenterMic}
-                  >
-                    {isPresenterMicLive ? 'Microphone Active' : 'Start My Microphone'}
-                  </Button>
-                </div>
               </div>
             )}
             <AnimatePresence initial={false}>

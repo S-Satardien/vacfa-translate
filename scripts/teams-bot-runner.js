@@ -157,15 +157,18 @@ let audioCallCount = 0;
  * @returns {Promise<object|null>} Parsed result or null on failure
  */
 async function transcribeAndTranslateAudio(base64Audio) {
-  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-  if (!apiKey) { console.error('[Gemini] No API key'); return null; }
+  const rawKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!rawKey) { console.error('[Gemini] No API key'); return null; }
+  const apiKeys = rawKey.split(',').map((k) => k.trim()).filter(Boolean);
+  const apiKey = apiKeys[audioCallCount % apiKeys.length];
 
   const candidateModels = [
     process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
     'gemini-3.5-flash',
-    'gemini-flash-lite-latest',
-    'gemini-3.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-3.1-flash-lite',
     'gemini-flash-latest',
+    'gemini-flash-lite-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
   for (const model of candidateModels) {
@@ -201,7 +204,8 @@ async function transcribeAndTranslateAudio(base64Audio) {
         }
         console.warn(`[Gemini Audio] ${model} HTTP ${res.status}: ${errMsg.slice(0, 160)}`);
         if (res.status === 429) {
-          await new Promise((r) => setTimeout(r, 600));
+          console.warn(`[Gemini Audio] 15 RPM Free limit reached. Pausing 2.5s before retry...`);
+          await new Promise((r) => setTimeout(r, 2500));
         }
         continue;
       }
@@ -422,8 +426,8 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(chunks.length>0){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            // Skip digital silence / background noise (Opus 4s silence is < 5KB)
-            if(blob.size > 5500){
+            // Skip digital silence / background noise (Opus 5.5s silence is < 6.5KB)
+            if(blob.size > 7000){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -452,7 +456,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(sliceRecorder&&sliceRecorder.state==='recording'){
           try{sliceRecorder.stop();}catch(e){}
         }
-      },4200);
+      },5500);
     }
 
     track.addEventListener('ended',()=>{
@@ -957,6 +961,9 @@ async function main() {
     dispatchNextAudioWorker();
   }
 
+  let lastAudioApiTime = 0;
+  const MIN_AUDIO_API_INTERVAL_MS = 4200; // Rate limit throttle (safely under 15 RPM free ceiling)
+
   function dispatchNextAudioWorker() {
     if (audioQueue.length === 0 || activeWorkers >= MAX_CONCURRENT_WORKERS) return;
     activeWorkers++;
@@ -964,6 +971,13 @@ async function main() {
 
     (async () => {
       try {
+        const now = Date.now();
+        const elapsedSinceLast = now - lastAudioApiTime;
+        if (elapsedSinceLast < MIN_AUDIO_API_INTERVAL_MS) {
+          await new Promise((r) => setTimeout(r, MIN_AUDIO_API_INTERVAL_MS - elapsedSinceLast));
+        }
+        lastAudioApiTime = Date.now();
+
         const sizeKB = Math.round(b64.length * 0.75 / 1024);
         const t0 = Date.now();
         const result = await transcribeAndTranslateAudio(b64);

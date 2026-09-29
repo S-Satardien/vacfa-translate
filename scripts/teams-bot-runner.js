@@ -328,12 +328,12 @@ function findBrowser() {
 // ============================================================================
 
 /**
- * Script A — WebRTC Audio Interceptor (Continuous Central Mixer)
+ * Script A — WebRTC Audio Interceptor (Direct Track Capture)
  *
- * Maintains a persistent Web Audio destination & recorder loop.
- * Every incoming audio track from RTCPeerConnection and HTMLMediaElement.srcObject
- * is dynamically plugged into the mixer, so track renegotiations never interrupt capture.
- * Chunks (3.5s) are transmitted via Runtime.addBinding('vacfaAudioChunk').
+ * Hooks RTCPeerConnection and HTMLMediaElement.srcObject.
+ * When Teams delivers an audio track (e.g. mainAudio), attaches a direct
+ * MediaRecorder to that stream in 2.0s Opus slices.
+ * Eliminates Web Audio API context-suspension and volume threshold drops.
  */
 const AUDIO_INTERCEPTOR_SCRIPT = `
 (function(){
@@ -343,68 +343,55 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
   const LOG='[VACFA Audio]';
   const seenTracks=new Set();
 
-  let audioCtx=null;
-  let mixerDest=null;
-  let analyser=null;
-  let recorder=null;
-  let currentSegmentChunks=[];
-  let maxVolumeInSegment=0;
+  function startDirectTrackRecorder(track,sourceLabel){
+    if(!track||track.kind!=='audio')return;
+    if(seenTracks.has(track.id))return;
+    seenTracks.add(track.id);
 
-  function initMixer(){
-    if(audioCtx)return;
+    console.log(LOG,'Attaching direct recorder to track ('+sourceLabel+'):',track.id);
+
+    const stream=new MediaStream([track]);
+
     try{
-      audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-      audioCtx.resume().catch(()=>{});
+      const audioEl=document.createElement('audio');
+      audioEl.srcObject=stream;
+      audioEl.autoplay=true;
+      audioEl.volume=1.0;
+      (document.body||document.documentElement).appendChild(audioEl);
+    }catch(e){}
 
-      mixerDest=audioCtx.createMediaStreamDestination();
-      analyser=audioCtx.createAnalyser();
-      analyser.fftSize=1024;
+    let sliceRecorder=null;
+    let sliceChunks=[];
+    let isStopped=false;
 
-      const buf=new Uint8Array(analyser.frequencyBinCount);
-      setInterval(()=>{
-        analyser.getByteTimeDomainData(buf);
-        let peak=0;
-        for(let i=0;i<buf.length;i++){
-          const diff=Math.abs(buf[i]-128);
-          if(diff>peak)peak=diff;
-        }
-        if(peak>maxVolumeInSegment)maxVolumeInSegment=peak;
-      },60);
-
-      startRecordingLoop();
-      console.log(LOG,'Persistent audio mixer initialized.');
-    }catch(e){console.error(LOG,'Init mixer failed',e);}
-  }
-
-  function startRecordingLoop(){
-    if(!mixerDest||!mixerDest.stream)return;
-
-    function runSlice(){
-      maxVolumeInSegment=0;
-      currentSegmentChunks=[];
-
-      try{
-        recorder=new MediaRecorder(mixerDest.stream,{mimeType:'audio/webm;codecs=opus'});
-      }catch(err){
-        console.error(LOG,'MediaRecorder creation failed, retrying in 2s',err);
-        setTimeout(runSlice,2000);
+    function recordLoop(){
+      if(isStopped||track.readyState==='ended'){
+        console.log(LOG,'Track ended, closing recorder for:',track.id);
+        seenTracks.delete(track.id);
         return;
       }
 
-      recorder.ondataavailable=(e)=>{
-        if(e.data&&e.data.size>0)currentSegmentChunks.push(e.data);
+      sliceChunks=[];
+      try{
+        sliceRecorder=new MediaRecorder(stream,{mimeType:'audio/webm;codecs=opus'});
+      }catch(e){
+        console.error(LOG,'MediaRecorder create failed:',e);
+        setTimeout(recordLoop,1500);
+        return;
+      }
+
+      sliceRecorder.ondataavailable=(e)=>{
+        if(e.data&&e.data.size>0)sliceChunks.push(e.data);
       };
 
-      recorder.onstop=async()=>{
-        const chunks=currentSegmentChunks;
-        const volume=maxVolumeInSegment;
+      sliceRecorder.onstop=async()=>{
+        const chunks=sliceChunks;
+        setTimeout(recordLoop,20);
 
-        setTimeout(runSlice,30);
-
-        if(chunks.length>0&&volume>=1){
+        if(chunks.length>0){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            if(blob.size>500){
+            if(blob.size>400){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -414,51 +401,36 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
               }
               const b64=btoa(binary);
               if(window.vacfaAudioChunk){
+                console.log(LOG,'Emitting audio slice ('+Math.round(blob.size/1024)+'KB) from '+track.id);
                 window.vacfaAudioChunk(b64);
               }
             }
-          }catch(encodeErr){console.error(LOG,'Encode error',encodeErr);}
+          }catch(encodeErr){
+            console.error(LOG,'Encode error:',encodeErr);
+          }
         }
       };
 
-      recorder.onerror=()=>{
-        setTimeout(runSlice,1000);
+      sliceRecorder.onerror=()=>{
+        setTimeout(recordLoop,1000);
       };
 
-      recorder.start();
+      sliceRecorder.start();
       setTimeout(()=>{
-        if(recorder&&recorder.state==='recording'){
-          try{recorder.stop();}catch(e){}
+        if(sliceRecorder&&sliceRecorder.state==='recording'){
+          try{sliceRecorder.stop();}catch(e){}
         }
       },2000);
     }
 
-    runSlice();
-  }
+    track.addEventListener('ended',()=>{
+      isStopped=true;
+      if(sliceRecorder&&sliceRecorder.state==='recording'){
+        try{sliceRecorder.stop();}catch(e){}
+      }
+    });
 
-  function connectTrackToMixer(track,sourceLabel){
-    if(!track||track.kind!=='audio')return;
-    if(seenTracks.has(track.id))return;
-    seenTracks.add(track.id);
-
-    initMixer();
-    if(!audioCtx)return;
-
-    try{
-      console.log(LOG,'Connecting remote audio track ('+sourceLabel+'):',track.id);
-      const stream=new MediaStream([track]);
-      const sourceNode=audioCtx.createMediaStreamSource(stream);
-
-      sourceNode.connect(mixerDest);
-      sourceNode.connect(analyser);
-      sourceNode.connect(audioCtx.destination);
-
-      track.addEventListener('ended',()=>{
-        console.log(LOG,'Audio track ended:',track.id);
-        try{sourceNode.disconnect();}catch(e){}
-        seenTracks.delete(track.id);
-      });
-    }catch(e){console.warn(LOG,'Failed to connect track',track.id,e);}
+    recordLoop();
   }
 
   /* ---- Hook RTCPeerConnection ---- */
@@ -468,7 +440,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
       const pc=new OrigPC(...args);
       pc.addEventListener('track',(ev)=>{
         if(ev.track&&ev.track.kind==='audio'){
-          connectTrackToMixer(ev.track,'RTCPeerConnection');
+          startDirectTrackRecorder(ev.track,'RTCPeerConnection');
         }
       });
       return pc;
@@ -485,7 +457,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         set(stream){
           if(stream instanceof MediaStream){
             for(const t of stream.getAudioTracks()){
-              connectTrackToMixer(t,'HTMLMediaElement.srcObject');
+              startDirectTrackRecorder(t,'HTMLMediaElement.srcObject');
             }
           }
           return desc.set.call(this,stream);
@@ -631,6 +603,9 @@ const CAPTION_OBSERVER_SCRIPT = `
     /you are muted/i,
     /ctrl\\+shift\\+m/i,
     /press .* to speak/i,
+    /^connecting\.{0,3}$/i,
+    /^hold on\.{0,3}$/i,
+    /^setting up\.{0,3}$/i,
   ];
 
   function sendCaption(speaker,text){

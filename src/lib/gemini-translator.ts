@@ -14,7 +14,7 @@ import { normalizeMedicalSpeech } from './speech-recognition';
 
 const API_KEY_STORAGE_KEY = 'vacfa_gemini_api_key';
 const MODEL_NAME_STORAGE_KEY = 'vacfa_gemini_model';
-const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
 
 export interface TranslationResult {
   originalText: string;
@@ -278,11 +278,11 @@ async function callGeminiApi(
   const preferredModel = getStoredModel();
   const candidateModels = [
     preferredModel,
+    'gemini-3.5-flash',
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
     'gemini-flash-latest',
     'gemini-3.8-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-pro-latest',
   ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
   const lowerText = text.toLowerCase();

@@ -161,8 +161,10 @@ async function transcribeAndTranslateAudio(base64Audio) {
   if (!apiKey) { console.error('[Gemini] No API key'); return null; }
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.8-flash',
-    'gemini-3.8-flash',
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
     'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
@@ -189,7 +191,17 @@ async function transcribeAndTranslateAudio(base64Audio) {
       });
       clearTimeout(timer);
 
-      if (!res.ok) { continue; }
+      if (!res.ok) {
+        let errMsg = '';
+        try {
+          const errJson = await res.json();
+          errMsg = errJson?.error?.message || JSON.stringify(errJson);
+        } catch {
+          errMsg = await res.text().catch(() => '');
+        }
+        console.warn(`[Gemini Audio] ${model} HTTP ${res.status}: ${errMsg.slice(0, 160)}`);
+        continue;
+      }
       const json = await res.json();
       const raw = json?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!raw) continue;
@@ -200,7 +212,9 @@ async function transcribeAndTranslateAudio(base64Audio) {
       audioCallCount++;
       parsed._model = model;
       return parsed;
-    } catch { /* try next model */ }
+    } catch (fetchErr) {
+      console.warn(`[Gemini Audio] ${model} network error: ${fetchErr.message}`);
+    }
   }
   return null;
 }
@@ -219,8 +233,10 @@ async function translateText(text, speaker = 'Participant') {
   if (!apiKey) return fallbackTranslate(text);
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.8-flash',
-    'gemini-3.8-flash',
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
     'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
@@ -240,7 +256,17 @@ async function translateText(text, speaker = 'Participant') {
         signal: ctrl.signal,
       });
       clearTimeout(timer);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        let errMsg = '';
+        try {
+          const errJson = await res.json();
+          errMsg = errJson?.error?.message || JSON.stringify(errJson);
+        } catch {
+          errMsg = await res.text().catch(() => '');
+        }
+        console.warn(`[Gemini Text] ${model} HTTP ${res.status}: ${errMsg.slice(0, 160)}`);
+        continue;
+      }
       const data = await res.json();
       const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!raw) continue;
@@ -251,7 +277,9 @@ async function translateText(text, speaker = 'Participant') {
         glossaryTerms: p.detectedGlossaryTerms || [],
         provider: `Gemini (${model})`,
       };
-    } catch { /* next */ }
+    } catch (fetchErr) {
+      console.warn(`[Gemini Text] ${model} network error: ${fetchErr.message}`);
+    }
   }
   return fallbackTranslate(text);
 }
@@ -391,7 +419,8 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(chunks.length>0){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            if(blob.size>400){
+            // Skip digital silence / background noise (Opus silence is < 3.5KB)
+            if(blob.size > 3800){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -401,7 +430,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
               }
               const b64=btoa(binary);
               if(window.vacfaAudioChunk){
-                console.log(LOG,'Emitting audio slice ('+Math.round(blob.size/1024)+'KB) from '+track.id);
+                console.log(LOG,'Emitting speech slice ('+Math.round(blob.size/1024)+'KB) from '+track.id);
                 window.vacfaAudioChunk(b64);
               }
             }
@@ -420,7 +449,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(sliceRecorder&&sliceRecorder.state==='recording'){
           try{sliceRecorder.stop();}catch(e){}
         }
-      },2000);
+      },2500);
     }
 
     track.addEventListener('ended',()=>{

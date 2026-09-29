@@ -200,6 +200,9 @@ async function transcribeAndTranslateAudio(base64Audio) {
           errMsg = await res.text().catch(() => '');
         }
         console.warn(`[Gemini Audio] ${model} HTTP ${res.status}: ${errMsg.slice(0, 160)}`);
+        if (res.status === 429) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
         continue;
       }
       const json = await res.json();
@@ -419,8 +422,8 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(chunks.length>0){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            // Skip digital silence / background noise (Opus silence is < 3.5KB)
-            if(blob.size > 3800){
+            // Skip digital silence / background noise (Opus 4s silence is < 5KB)
+            if(blob.size > 5500){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -449,7 +452,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(sliceRecorder&&sliceRecorder.state==='recording'){
           try{sliceRecorder.stop();}catch(e){}
         }
-      },2500);
+      },4200);
     }
 
     track.addEventListener('ended',()=>{
@@ -943,10 +946,10 @@ async function main() {
     return true;
   }
 
-  // Concurrent Audio Processing Queue — ZERO chunks dropped
+  // Sequential Audio Processing Queue — strictly chronological, zero out-of-order subtitles
   const audioQueue = [];
   let activeWorkers = 0;
-  const MAX_CONCURRENT_WORKERS = 3;
+  const MAX_CONCURRENT_WORKERS = 1;
 
   function enqueueAudioChunk(b64) {
     if (audioQueue.length > 10) audioQueue.shift();

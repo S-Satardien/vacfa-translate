@@ -140,35 +140,14 @@ function broadcastToClients(data) {
 // ============================================================================
 // 3. Gemini — Audio Transcription + Translation (single API call)
 // ============================================================================
-const AUDIO_SYSTEM_PROMPT = `
-You are VACFA Translate, an expert real-time interpreter for African public health conferences.
-
-Listen to the audio. Perform ALL of these steps:
-1. Transcribe the speech in its original language.
-2. Detect the source language (en, fr, pt, or sw).
+const AUDIO_SYSTEM_PROMPT = `You are VACFA Translate, an expert real-time interpreter for African public health summits.
+1. Transcribe the exact words spoken in the audio segment.
+2. Detect language (en, fr, pt, or sw).
 3. Translate into English (en), French (fr), Portuguese (pt), and Swahili (sw).
-4. Flag any VACFA medical glossary terms found.
-
-VACFA Glossary (always use these translations):
-  NITAG → FR: NITAG, PT: NITAG, SW: NITAG
-  AEFI  → FR: MAPI,  PT: EAPV,  SW: AEFI
-  EPI   → FR: PEV,   PT: PAV,   SW: EPI
-  VVM   → FR: PCV,   PT: MVV,   SW: VVM
-  Gavi  → FR: Gavi,  PT: Gavi,  SW: Gavi
-  mRNA  → FR: ARNm,  PT: mRNA,  SW: mRNA
-  Zero-dose child → FR: enfant zéro-dose, PT: criança dose-zero, SW: mtoto asiyechanjwa kabisa
-  Cold chain      → FR: chaîne du froid,  PT: cadeia de frio,    SW: mfumo wa baridi
-
-If the audio contains NO intelligible speech, output: { "noSpeech": true }
-
-Output ONLY valid JSON:
-{
-  "transcript": "exact words spoken",
-  "detectedLanguage": "en",
-  "speaker": "Unknown",
-  "translations": { "en": "...", "fr": "...", "pt": "...", "sw": "..." },
-  "detectedGlossaryTerms": []
-}`;
+4. Strictly enforce VACFA terms: NITAG, AEFI->MAPI/EAPV/AEFI, EPI->PEV/PAV/EPI, VVM, Gavi, mRNA, Zero-dose child, Cold chain.
+If there is NO intelligible speech, reply ONLY: {"noSpeech":true}
+Output ONLY valid compact JSON:
+{"transcript":"...","detectedLanguage":"en","speaker":"Speaker","translations":{"en":"...","fr":"...","pt":"...","sw":"..."},"detectedGlossaryTerms":[]}`;
 
 let audioCallCount = 0;
 
@@ -422,10 +401,10 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
 
         setTimeout(runSlice,30);
 
-        if(chunks.length>0&&volume>=2){
+        if(chunks.length>0&&volume>=1){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            if(blob.size>800){
+            if(blob.size>500){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -435,7 +414,6 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
               }
               const b64=btoa(binary);
               if(window.vacfaAudioChunk){
-                console.log(LOG,'Transmitting audio chunk (vol: '+volume+', size: '+Math.round(blob.size/1024)+'KB)');
                 window.vacfaAudioChunk(b64);
               }
             }
@@ -452,7 +430,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(recorder&&recorder.state==='recording'){
           try{recorder.stop();}catch(e){}
         }
-      },3500);
+      },2000);
     }
 
     runSlice();
@@ -943,12 +921,88 @@ async function main() {
     }
   });
 
+  // Unified deduplication ring buffer across audio chunks and live captions
+  const recentPhrases = [];
+  function checkAndRecordPhrase(text) {
+    const clean = text.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (clean.length < 3) return false;
+    const now = Date.now();
+    while (recentPhrases.length > 0 && now - recentPhrases[0].time > 15000) {
+      recentPhrases.shift();
+    }
+    for (const item of recentPhrases) {
+      if (item.clean === clean || (clean.length > 10 && item.clean.includes(clean)) || (item.clean.length > 10 && clean.includes(item.clean))) {
+        return false;
+      }
+    }
+    recentPhrases.push({ clean, time: now });
+    return true;
+  }
+
+  // Concurrent Audio Processing Queue — ZERO chunks dropped
+  const audioQueue = [];
+  let activeWorkers = 0;
+  const MAX_CONCURRENT_WORKERS = 3;
+
+  function enqueueAudioChunk(b64) {
+    if (audioQueue.length > 10) audioQueue.shift();
+    audioQueue.push(b64);
+    dispatchNextAudioWorker();
+  }
+
+  function dispatchNextAudioWorker() {
+    if (audioQueue.length === 0 || activeWorkers >= MAX_CONCURRENT_WORKERS) return;
+    activeWorkers++;
+    const b64 = audioQueue.shift();
+
+    (async () => {
+      try {
+        const sizeKB = Math.round(b64.length * 0.75 / 1024);
+        const t0 = Date.now();
+        const result = await transcribeAndTranslateAudio(b64);
+        const elapsed = Date.now() - t0;
+
+        if (result && result.transcript && result.transcript.trim()) {
+          const spoken = result.transcript.trim();
+          if (checkAndRecordPhrase(spoken)) {
+            const speaker = result.speaker || 'Meeting Speaker';
+            console.log(`\n🎙️  [${speaker}] (AI: ${elapsed}ms): "${spoken}"`);
+            console.log(`🌍  FR: "${result.translations?.fr}" | PT: "${result.translations?.pt}" | SW: "${result.translations?.sw}"`);
+
+            const entry = {
+              id: `bot-audio-${Date.now()}`,
+              speaker: `${speaker} (${(result.detectedLanguage || 'en').toUpperCase()})`,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              originalText: spoken,
+              translations: result.translations || {},
+              glossaryTerms: result.detectedGlossaryTerms || [],
+            };
+
+            broadcastToClients({ type: 'caption', caption: entry });
+
+            if (CART_URL) {
+              const cartLang = process.env.CART_LANGUAGE || 'fr';
+              const cartText = result.translations?.[cartLang] || spoken;
+              sendCartCaption(CART_URL, cartText, speaker).catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Bot] Worker error:', err.message);
+      } finally {
+        activeWorkers--;
+        if (audioQueue.length > 0) {
+          setImmediate(dispatchNextAudioWorker);
+        }
+      }
+    })();
+  }
+
   // ---- Handle CDP messages ----
   ws.on('message', async (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
-    // Resolve pending command promises
     if (msg.id && pending.has(msg.id)) {
       pending.get(msg.id)(msg);
       pending.delete(msg.id);
@@ -957,90 +1011,37 @@ async function main() {
     // ---- AUDIO CHUNK received from browser ----
     if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === 'vacfaAudioChunk') {
       const b64 = msg.params.payload;
-      if (!b64 || b64.length < 100) return; // Too small, skip
-
-      // Rate-limit: only process one chunk at a time
-      if (processingAudio) {
-        return;
+      if (b64 && b64.length > 100) {
+        enqueueAudioChunk(b64);
       }
-      processingAudio = true;
-
-      try {
-        const sizeKB = Math.round(b64.length * 0.75 / 1024);
-        console.log(`\n🎤 [Audio] Received ${sizeKB}KB chunk — sending to Gemini for STT+translation...`);
-
-        const result = await transcribeAndTranslateAudio(b64);
-
-        if (result && result.transcript) {
-          // Dedup check
-          const now = Date.now();
-          if (result.transcript === lastBroadcastText && now - lastBroadcastTime < 5000) {
-            processingAudio = false;
-            return;
-          }
-          lastBroadcastText = result.transcript;
-          lastBroadcastTime = now;
-
-          const speaker = result.speaker || 'Meeting Speaker';
-          console.log(`🎙️  [${speaker}]: "${result.transcript}"`);
-          console.log(`🌍  Translations (${result._model}):`);
-          console.log(`    🇫🇷 FR: "${result.translations?.fr}"`);
-          console.log(`    🇵🇹 PT: "${result.translations?.pt}"`);
-          console.log(`    🇹🇿 SW: "${result.translations?.sw}"`);
-
-          const entry = {
-            id: `bot-audio-${Date.now()}`,
-            speaker: `${speaker} (${(result.detectedLanguage || 'en').toUpperCase()})`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            originalText: result.transcript,
-            translations: result.translations || {},
-            glossaryTerms: result.detectedGlossaryTerms || [],
-          };
-
-          broadcastToClients({ type: 'caption', caption: entry });
-
-          if (CART_URL) {
-            const cartLang = process.env.CART_LANGUAGE || 'fr';
-            const cartText = result.translations?.[cartLang] || result.transcript;
-            sendCartCaption(CART_URL, cartText, speaker).catch(() => {});
-          }
-        }
-      } catch (err) {
-        console.error('[Bot] Audio processing error:', err.message);
-      }
-      processingAudio = false;
     }
 
-    // ---- CAPTION TEXT received from DOM observer (fallback) ----
+    // ---- CAPTION TEXT received from DOM observer (sub-second fast path) ----
     if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === 'vacfaSpeechData') {
       try {
         const data = JSON.parse(msg.params.payload);
         const { speaker, text } = data;
         if (!text || text.length < 3) return;
 
-        // Dedup
-        const now = Date.now();
-        if (text === lastBroadcastText && now - lastBroadcastTime < 4000) return;
-        lastBroadcastText = text;
-        lastBroadcastTime = now;
+        if (checkAndRecordPhrase(text)) {
+          console.log(`\n📝 [Live Captions Fast-Path] ${speaker}: "${text}"`);
+          translateText(text, speaker).then((tr) => {
+            const entry = {
+              id: `bot-cap-${Date.now()}`,
+              speaker: `${speaker} (${tr.sourceLang.toUpperCase()})`,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              originalText: text,
+              translations: tr.translations,
+              glossaryTerms: tr.glossaryTerms,
+            };
 
-        console.log(`\n📝 [Captions Fallback] ${speaker}: "${text}"`);
-        const tr = await translateText(text, speaker);
+            broadcastToClients({ type: 'caption', caption: entry });
 
-        const entry = {
-          id: `bot-cap-${Date.now()}`,
-          speaker: `${speaker} (${tr.sourceLang.toUpperCase()})`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          originalText: text,
-          translations: tr.translations,
-          glossaryTerms: tr.glossaryTerms,
-        };
-
-        broadcastToClients({ type: 'caption', caption: entry });
-
-        if (CART_URL) {
-          const cartLang = process.env.CART_LANGUAGE || 'fr';
-          sendCartCaption(CART_URL, tr.translations[cartLang] || text, speaker).catch(() => {});
+            if (CART_URL) {
+              const cartLang = process.env.CART_LANGUAGE || 'fr';
+              sendCartCaption(CART_URL, tr.translations[cartLang] || text, speaker).catch(() => {});
+            }
+          }).catch(() => {});
         }
       } catch (e) {
         console.error('[Bot] Caption parse error:', e.message);

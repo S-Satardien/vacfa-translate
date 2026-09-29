@@ -345,20 +345,18 @@ function findBrowser() {
 }
 
 // ============================================================================
-// 7. CDP Injection Scripts (evaluated BEFORE Teams JS loads)
+// 7. CDP Injection Scripts (evaluated BEFORE Teams JS loads and continuously)
 // ============================================================================
 
 /**
  * Script A — WebRTC Audio Interceptor
  *
- * Monkey-patches RTCPeerConnection and HTMLMediaElement.srcObject BEFORE
- * Teams bundles execute. Captures the mixed remote audio stream via
- * MediaRecorder and sends 3.5-second WebM/Opus chunks to the host via
- * Runtime.addBinding('vacfaAudioChunk').
+ * Monkey-patches RTCPeerConnection and HTMLMediaElement.srcObject.
+ * Captures the mixed remote audio stream via MediaRecorder and sends
+ * 3.5-second WebM/Opus chunks to the host via Runtime.addBinding('vacfaAudioChunk').
  */
 const AUDIO_INTERCEPTOR_SCRIPT = `
 (function(){
-  if(!location.href.includes('teams.microsoft.com')&&!location.href.includes('teams.live.com'))return;
   if(window.__VACFA_RTC_HOOKED__)return;
   window.__VACFA_RTC_HOOKED__=true;
 
@@ -368,20 +366,22 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
 
   /* ---- Hook RTCPeerConnection ---- */
   const OrigPC=window.RTCPeerConnection;
-  window.RTCPeerConnection=function(...a){
-    const pc=new OrigPC(...a);
-    pc.addEventListener('track',(ev)=>{
-      if(ev.track.kind!=='audio')return;
-      if(seenTracks.has(ev.track.id))return;
-      seenTracks.add(ev.track.id);
-      console.log(LOG,'Got remote audio track',ev.track.id);
-      const stream=ev.streams[0]||new MediaStream([ev.track]);
-      if(!captureActive){ captureActive=true; startCapture(stream); }
-    });
-    return pc;
-  };
-  window.RTCPeerConnection.prototype=OrigPC.prototype;
-  Object.setPrototypeOf(window.RTCPeerConnection,OrigPC);
+  if(OrigPC){
+    window.RTCPeerConnection=function(...a){
+      const pc=new OrigPC(...a);
+      pc.addEventListener('track',(ev)=>{
+        if(ev.track.kind!=='audio')return;
+        if(seenTracks.has(ev.track.id))return;
+        seenTracks.add(ev.track.id);
+        console.log(LOG,'Got remote audio track',ev.track.id);
+        const stream=ev.streams[0]||new MediaStream([ev.track]);
+        if(!captureActive){ captureActive=true; startCapture(stream); }
+      });
+      return pc;
+    };
+    window.RTCPeerConnection.prototype=OrigPC.prototype;
+    Object.setPrototypeOf(window.RTCPeerConnection,OrigPC);
+  }
 
   /* ---- Hook HTMLMediaElement.srcObject ---- */
   try{
@@ -503,9 +503,8 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
  */
 const PRE_JOIN_SCRIPT = `
 (function(){
-  if(!location.href.includes('teams.microsoft.com')&&!location.href.includes('teams.live.com'))return;
-  if(window.__VACFA_PREJOIN__)return;
-  window.__VACFA_PREJOIN__=true;
+  if(window.__VACFA_PREJOIN_ACTIVE__)return;
+  window.__VACFA_PREJOIN_ACTIVE__=true;
 
   const BOT_NAME="${BOT_NAME}";
   const CHAT_MSG="${CHAT_ANNOUNCEMENT.replace(/"/g, '\\"')}";
@@ -553,7 +552,7 @@ const PRE_JOIN_SCRIPT = `
       handlePreJoin();
       if(checkInMeeting()){
         joinedMeeting=true;
-        console.log('[VACFA Bot] Inside meeting — audio capture should be active');
+        console.log('[VACFA Bot] Inside meeting — audio capture active');
         enableCaptions();
         setTimeout(postChatAnnouncement,6000);
       }
@@ -565,7 +564,6 @@ const PRE_JOIN_SCRIPT = `
     document.dispatchEvent(new KeyboardEvent('keydown',{
       key:'C',code:'KeyC',keyCode:67,which:67,ctrlKey:true,shiftKey:true,bubbles:true
     }));
-    /* Also try the menu route */
     setTimeout(()=>{
       const more=document.querySelector('button[data-tid="calling-more-actions"],button[aria-label*="More" i]');
       if(more){
@@ -614,7 +612,6 @@ const PRE_JOIN_SCRIPT = `
  */
 const CAPTION_OBSERVER_SCRIPT = `
 (function(){
-  if(!location.href.includes('teams.microsoft.com')&&!location.href.includes('teams.live.com'))return;
   if(window.__VACFA_CAPTION_OBS__)return;
   window.__VACFA_CAPTION_OBS__=true;
 
@@ -660,19 +657,16 @@ const CAPTION_OBSERVER_SCRIPT = `
     return{speaker,text};
   }
 
-  /* Observe a document context */
   function observeDoc(doc,label){
     try{
       const obs=new MutationObserver((muts)=>{
         for(const m of muts){
-          /* Check added nodes */
           for(const n of m.addedNodes){
             if(n.nodeType!==1)continue;
             if(n.matches&&n.matches(CAPTION_SELECTORS)){
               const r=extractCaptionText(n);
               if(r)sendCaption(r.speaker,r.text);
             }
-            /* Check children */
             try{
               const kids=n.querySelectorAll(CAPTION_SELECTORS);
               for(const k of kids){
@@ -681,7 +675,6 @@ const CAPTION_OBSERVER_SCRIPT = `
               }
             }catch{}
           }
-          /* Character data changes (text edits within captions) */
           if(m.type==='characterData'&&m.target.parentElement){
             const parent=m.target.parentElement.closest(CAPTION_SELECTORS);
             if(parent){
@@ -695,16 +688,13 @@ const CAPTION_OBSERVER_SCRIPT = `
       const target=doc.body||doc.documentElement;
       if(target){
         obs.observe(target,{childList:true,subtree:true,characterData:true});
-        console.log(LOG,'Observing',label);
       }
-    }catch(e){console.warn(LOG,'observe error on',label,e);}
+    }catch(e){}
   }
 
-  /* Wait for body, then observe */
   function init(){
     observeDoc(document,'main document');
 
-    /* Also observe all iframes (Teams may render captions inside iframes) */
     function scanIframes(){
       try{
         const frames=document.querySelectorAll('iframe');
@@ -721,7 +711,6 @@ const CAPTION_OBSERVER_SCRIPT = `
     scanIframes();
     setInterval(scanIframes,3000);
 
-    /* Polling fallback: scan existing captions every 800ms */
     setInterval(()=>{
       try{
         const nodes=document.querySelectorAll(CAPTION_SELECTORS);
@@ -755,7 +744,23 @@ async function main() {
   const profileDir = path.join(os.homedir(), '.gemini', 'antigravity', 'teams-bot-profile');
   if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
 
-  // Launch Chrome with about:blank — we navigate AFTER CDP scripts are injected
+  // Clean up any stale process occupying port DEBUG_PORT
+  try {
+    const { execSync } = require('child_process');
+    if (process.platform === 'win32') {
+      const netstat = execSync(`netstat -ano | findstr :${DEBUG_PORT} | findstr LISTENING`, { encoding: 'utf8' });
+      for (const line of netstat.trim().split('\n')) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && pid !== '0' && pid !== process.pid.toString()) {
+          console.log(`[Bot] Releasing stale debug port ${DEBUG_PORT} (PID ${pid})...`);
+          try { execSync(`taskkill /F /PID ${pid}`); } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  // Launch Chrome directly with the target MEETING_URL
   const browserArgs = [
     '--no-first-run',
     '--no-default-browser-check',
@@ -766,18 +771,25 @@ async function main() {
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     '--remote-allow-origins=*',
-    'about:blank',
+    MEETING_URL,
   ];
 
-  console.log('[Bot] Launching browser (about:blank → setup → navigate to meeting)...');
+  console.log('[Bot] Launching browser directly to meeting URL...');
   const browserProcess = spawn(browserBin, browserArgs, { detached: false, stdio: 'ignore' });
+
   browserProcess.on('error', (e) => console.error('[Bot] Browser spawn error:', e.message));
-  browserProcess.on('exit', (code) => { console.log(`[Bot] Browser exited (code ${code})`); process.exit(0); });
+  browserProcess.on('exit', (code) => {
+    // Note: on Windows, chrome.exe launcher stub can exit with code 0 while the browser runs.
+    // Only terminate runner if code != 0.
+    if (code !== 0 && code !== null) {
+      console.log(`[Bot] Browser process closed (code ${code}).`);
+      process.exit(code);
+    }
+  });
 
   // ---- CDP Connection Loop ----
   const WebSocketClient = require('ws');
 
-  /** Fetch JSON from CDP endpoint. */
   function cdpFetch(urlPath) {
     return new Promise((resolve, reject) => {
       http.get(`http://127.0.0.1:${DEBUG_PORT}${urlPath}`, (res) => {
@@ -788,29 +800,37 @@ async function main() {
     });
   }
 
-  // Wait for CDP to be available
+  // Poll for CDP endpoint
   let wsUrl = null;
-  for (let attempt = 1; ; attempt++) {
+  for (let attempt = 1; attempt <= 45; attempt++) {
     await new Promise((r) => setTimeout(r, 800));
     try {
       const pages = await cdpFetch('/json');
-      const page = pages.find((p) => p.type === 'page');
+      const page = pages.find((p) => p.type === 'page' && (p.url.includes('teams') || p.url.includes('microsoft') || p.url === MEETING_URL || p.url.startsWith('http')));
       if (page?.webSocketDebuggerUrl) {
         wsUrl = page.webSocketDebuggerUrl;
         break;
       }
-    } catch { /* retry */ }
-    if (attempt % 10 === 0) console.log(`[Bot] Waiting for CDP... (attempt ${attempt})`);
+      // Fallback to first page if specific match not found yet
+      if (!wsUrl && pages[0]?.webSocketDebuggerUrl) {
+        wsUrl = pages[0].webSocketDebuggerUrl;
+        break;
+      }
+    } catch { /* wait for Chrome */ }
+    if (attempt % 5 === 0) console.log(`[Bot] Connecting to Chrome CDP bridge (attempt ${attempt}/45)...`);
   }
 
-  console.log('[Bot] CDP available — setting up interceptors...');
+  if (!wsUrl) {
+    console.error('[Bot] Failed to connect to browser CDP port. Please check that Chrome is installed.');
+    return;
+  }
 
-  // ---- CDP WebSocket ----
+  console.log('[Bot] CDP available — setting up real-time audio pipeline...');
+
   const ws = new WebSocketClient(wsUrl);
   let cmdId = 0;
   const pending = new Map();
 
-  /** Send a CDP command and await its response. */
   function cdpSend(method, params = {}) {
     const id = ++cmdId;
     return new Promise((resolve) => {
@@ -819,44 +839,51 @@ async function main() {
     });
   }
 
-  // Deduplication state for captions
   let lastBroadcastText = '';
   let lastBroadcastTime = 0;
   let processingAudio = false;
 
   ws.on('open', async () => {
-    console.log('[Bot] CDP WebSocket connected');
+    console.log('[Bot] CDP WebSocket connection established.');
 
-    // 1. Enable domains
+    // 1. Enable CDP domains
     await cdpSend('Page.enable');
     await cdpSend('Runtime.enable');
 
-    // 2. *** KEY FIX *** Bypass ALL Content Security Policy (fixes WASM workers + Trusted Types)
+    // 2. Bypass Content Security Policy (fixes WASM calling workers & Trusted Types)
     await cdpSend('Page.setBypassCSP', { enabled: true });
-    console.log('[Bot] ✅ Page.setBypassCSP enabled — Trusted Types / WASM blocks eliminated');
+    console.log('[Bot] ✅ Page.setBypassCSP enabled — Trusted Types & WASM restrictions cleared');
 
-    // 3. Create bindings for browser → Node.js IPC
+    // 3. Register IPC bindings (Browser -> Node.js)
     await cdpSend('Runtime.addBinding', { name: 'vacfaAudioChunk' });
     await cdpSend('Runtime.addBinding', { name: 'vacfaSpeechData' });
-    console.log('[Bot] ✅ Runtime bindings registered (vacfaAudioChunk, vacfaSpeechData)');
+    console.log('[Bot] ✅ Runtime bindings active (vacfaAudioChunk, vacfaSpeechData)');
 
-    // 4. Inject scripts that execute BEFORE any page JS loads
+    // 4. Inject scripts for all subsequent page navigations
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: AUDIO_INTERCEPTOR_SCRIPT });
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: PRE_JOIN_SCRIPT });
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: CAPTION_OBSERVER_SCRIPT });
-    console.log('[Bot] ✅ Interceptor scripts registered (will fire on Teams page load)');
+    console.log('[Bot] ✅ Pre-load interceptors armed for page loads');
 
-    // 5. Navigate to the meeting
-    console.log(`[Bot] Navigating to meeting: ${MEETING_URL}`);
-    await cdpSend('Page.navigate', { url: MEETING_URL });
+    // 5. Evaluate immediately on the currently loaded page
+    await cdpSend('Runtime.evaluate', { expression: AUDIO_INTERCEPTOR_SCRIPT });
+    await cdpSend('Runtime.evaluate', { expression: PRE_JOIN_SCRIPT });
+    await cdpSend('Runtime.evaluate', { expression: CAPTION_OBSERVER_SCRIPT });
+    console.log('[Bot] ✅ Interceptors activated on current Teams tab');
 
-    // 6. Also dispatch Ctrl+Shift+C after a delay to toggle Live Captions via CDP
+    // 6. Keep active monitor alive to handle dynamically added elements / iframes
+    setInterval(() => {
+      cdpSend('Runtime.evaluate', { expression: PRE_JOIN_SCRIPT }).catch(() => {});
+      cdpSend('Runtime.evaluate', { expression: CAPTION_OBSERVER_SCRIPT }).catch(() => {});
+    }, 2500);
+
+    // 7. Dispatch Ctrl+Shift+C key combination via CDP hardware input
     setTimeout(async () => {
       try {
         await cdpSend('Input.dispatchKeyEvent', {
           type: 'rawKeyDown',
           windowsVirtualKeyCode: 67,
-          modifiers: 10, // Ctrl=2 + Shift=8
+          modifiers: 10,
           code: 'KeyC',
           key: 'C',
         });
@@ -867,15 +894,15 @@ async function main() {
           code: 'KeyC',
           key: 'C',
         });
-        console.log('[Bot] Dispatched Ctrl+Shift+C to toggle Live Captions');
-      } catch { /* non-critical */ }
-    }, 15000);
+        console.log('[Bot] Dispatched Ctrl+Shift+C hardware hotkey for Teams Live Captions');
+      } catch {}
+    }, 12000);
 
-    // 7. CART connectivity check
+    // 8. Verify CART caption endpoint if configured
     if (CART_URL) {
       setTimeout(async () => {
-        const ok = await sendCartCaption(CART_URL, 'VACFA AI Interpreter connected.');
-        console.log(`[Bot] CART endpoint: ${ok ? 'ACTIVE' : 'waiting'}`);
+        const ok = await sendCartCaption(CART_URL, 'VACFA AI Interpreter online.');
+        console.log(`[Bot] CART Ingestion Endpoint: ${ok ? 'ACTIVE' : 'Waiting for meeting'}`);
       }, 5000);
     }
   });

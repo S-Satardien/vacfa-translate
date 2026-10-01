@@ -163,12 +163,12 @@ async function transcribeAndTranslateAudio(base64Audio) {
   const apiKey = apiKeys[audioCallCount % apiKeys.length];
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-flash-lite-latest',
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
-    'gemini-2.5-flash',
     'gemini-3.1-flash-lite',
     'gemini-flash-latest',
-    'gemini-flash-lite-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
   for (const model of candidateModels) {
@@ -240,10 +240,11 @@ async function translateText(text, speaker = 'Participant') {
   if (!apiKey) return fallbackTranslate(text);
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
-    'gemini-3.5-flash',
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-flash-lite-latest',
     'gemini-flash-lite-latest',
     'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
     'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
@@ -407,6 +408,9 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
       }
 
       sliceChunks=[];
+      let consecutiveSilence=0;
+      const startTime=Date.now();
+
       try{
         sliceRecorder=new MediaRecorder(stream,{mimeType:'audio/webm;codecs=opus'});
       }catch(e){
@@ -416,7 +420,22 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
       }
 
       sliceRecorder.ondataavailable=(e)=>{
-        if(e.data&&e.data.size>0)sliceChunks.push(e.data);
+        if(e.data&&e.data.size>0){
+          sliceChunks.push(e.data);
+          // In 350ms Opus audio: silence/room tone is < 240 bytes; active voice is 500-1800 bytes
+          if(e.data.size < 240){
+            consecutiveSilence++;
+          }else{
+            consecutiveSilence=0;
+          }
+          const elapsed=Date.now()-startTime;
+          // Natural sentence boundary: if >= 3.0s recorded AND speaker paused for >= 700ms (2 chunks)
+          if(elapsed>=3000 && consecutiveSilence>=2){
+            if(sliceRecorder&&sliceRecorder.state==='recording'){
+              try{sliceRecorder.stop();}catch(err){}
+            }
+          }
+        }
       };
 
       sliceRecorder.onstop=async()=>{
@@ -426,8 +445,8 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(chunks.length>0){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            // Skip digital silence / background noise (Opus 5.5s silence is < 6.5KB)
-            if(blob.size > 7000){
+            // Skip digital silence / background noise (Opus active speech is > 4.5KB)
+            if(blob.size > 4500){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -451,12 +470,13 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         setTimeout(recordLoop,1000);
       };
 
-      sliceRecorder.start();
+      // Poll in 350ms intervals to catch natural breath pauses
+      sliceRecorder.start(350);
       setTimeout(()=>{
         if(sliceRecorder&&sliceRecorder.state==='recording'){
           try{sliceRecorder.stop();}catch(e){}
         }
-      },5500);
+      },5200);
     }
 
     track.addEventListener('ended',()=>{

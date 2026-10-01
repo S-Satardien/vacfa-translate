@@ -140,14 +140,25 @@ function broadcastToClients(data) {
 // ============================================================================
 // 3. Gemini — Audio Transcription + Translation (single API call)
 // ============================================================================
-const AUDIO_SYSTEM_PROMPT = `You are VACFA Translate, an expert real-time conference interpreter for African public health summits.
-1. Speaker Accent: Speakers frequently speak English with a South African accent (en-ZA), African English, French, Portuguese, or Swahili. Accurately transcribe South African English pronunciation, vowels (e.g. kit/pin vowel shifts, glottal stops, non-rhotic cadence), colloquial phrasing, and medical terminology into accurate English.
-2. Complete Sentences: Transcribe in full, coherent, natural sentences. Do not truncate words or output isolated broken syllables.
-3. Detect language (en, fr, pt, or sw).
-4. Translate into English (en), French (fr), Portuguese (pt), and Swahili (sw).
-5. Strictly enforce VACFA terms: NITAG, AEFI->MAPI/EAPV/AEFI, EPI->PEV/PAV/EPI, VVM, Gavi, mRNA, Zero-dose child, Cold chain.
-If there is NO intelligible speech or only room background noise, reply ONLY: {"noSpeech":true}
-Output ONLY valid compact JSON:
+const AUDIO_SYSTEM_PROMPT = `You are VACFA Translate, an expert real-time simultaneous conference interpreter specializing in African international public health summits and academic addresses.
+
+CORE AFRICAN LINGUISTIC ZONES & ACCENTS:
+1. Anglophone Africa (South Africa en-ZA, Nigeria en-NG, Kenya en-KE, Ghana en-GH):
+   - Accurately recognize South African English phonology (centralized kit/pin vowels, non-rhotic cadence, glottal stops, unstressed diphthongs).
+   - Accurately transcribe South African academic, institutional & health vocabulary: "Matric" (Grade 12 Senior Certificate, NEVER transcribe as "Matrix"), "educators", "alumni", "Heathfield", "tertiary", "CHW" (Community Health Worker), "SAHPRA", "NITAG", "NISH", "VACFA", "EPI", "VVM", "DALY", "Gavi", "AESI", "SAGE", "Africa CDC", "WHO AFRO".
+2. Francophone Africa (Senegal, Côte d'Ivoire, DRC, Cameroon, Rwanda):
+   - Recognize African French vowel cadence and public health terms: PEV (Programme Élargi de Vaccination), MAPI (Manifestations Post-vaccinales Indésirables), chaîne du froid, surveillance épidémiologique.
+3. Lusophone Africa (Angola pt-AO, Mozambique pt-MZ - PALOP):
+   - Transcribe and translate into African/European Portuguese: PAV (Programa Alargado de Vacinação), EAPV (Eventos Adversos Pós-Vacinação), cadeia de frio. Strictly avoid Brazilian colloquialisms.
+4. East & Central African Kiswahili:
+   - Authentic Swahili grammar and public health terminology: Chanjo, Kinga ya jamii, Mlolongo wa baridi.
+
+RULES:
+- Transcribe full, continuous grammatical thoughts. Do not truncate words or output isolated broken syllables.
+- If an audio segment starts mid-thought, connect naturally to the preceding context.
+- Strictly enforce VACFA glossary terms.
+- If there is NO intelligible speech or only room background noise, reply ONLY: {"noSpeech":true}
+- Output ONLY valid compact JSON:
 {"transcript":"...","detectedLanguage":"en","speaker":"Speaker","translations":{"en":"...","fr":"...","pt":"...","sw":"..."},"detectedGlossaryTerms":[]}`;
 
 let audioCallCount = 0;
@@ -165,11 +176,10 @@ async function transcribeAndTranslateAudio(base64Audio) {
   const apiKey = apiKeys[audioCallCount % apiKeys.length];
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-flash-lite-latest',
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
+    'gemini-3.5-flash',
     'gemini-flash-lite-latest',
     'gemini-3.5-flash-lite',
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
     'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
@@ -405,12 +415,16 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
     let sliceRecorder=null;
     let sliceChunks=[];
     let isStopped=false;
+    let safetyTimer=null;
+    let isLoopRunning=false;
 
     function recordLoop(){
-      if(isStopped||track.readyState==='ended'){
-        console.log(LOG,'Track ended, closing recorder for:',track.id);
-        seenTracks.delete(track.id);
-        return;
+      if(isStopped||track.readyState==='ended'||isLoopRunning)return;
+      isLoopRunning=true;
+
+      if(safetyTimer){
+        clearTimeout(safetyTimer);
+        safetyTimer=null;
       }
 
       sliceChunks=[];
@@ -427,8 +441,19 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
           sliceRecorder=new MediaRecorder(stream);
         }catch(e2){
           console.error(LOG,'MediaRecorder create failed:',e2);
+          isLoopRunning=false;
           setTimeout(recordLoop,1500);
           return;
+        }
+      }
+
+      function stopActiveRecorder(){
+        if(safetyTimer){
+          clearTimeout(safetyTimer);
+          safetyTimer=null;
+        }
+        if(sliceRecorder&&sliceRecorder.state==='recording'){
+          try{sliceRecorder.stop();}catch(err){}
         }
       }
 
@@ -442,18 +467,21 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
             consecutiveSilence=0;
           }
           const elapsed=Date.now()-startTime;
-          // Natural sentence boundary: require >= 4.8s of speech AND at least 1.0s (3 chunks) of real pause
-          if(elapsed>=4800 && consecutiveSilence>=3){
-            if(sliceRecorder&&sliceRecorder.state==='recording'){
-              try{sliceRecorder.stop();}catch(err){}
-            }
+          // Natural sentence boundary: require >= 5.5s of speech AND at least 1.2s (3-4 chunks) of real pause
+          if(elapsed>=5500 && consecutiveSilence>=3){
+            stopActiveRecorder();
           }
         }
       };
 
       sliceRecorder.onstop=async()=>{
+        if(safetyTimer){
+          clearTimeout(safetyTimer);
+          safetyTimer=null;
+        }
+        isLoopRunning=false;
         const chunks=sliceChunks;
-        setTimeout(recordLoop,20);
+        setTimeout(recordLoop,40);
 
         if(chunks.length>0){
           try{
@@ -480,17 +508,21 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
       };
 
       sliceRecorder.onerror=()=>{
+        if(safetyTimer){
+          clearTimeout(safetyTimer);
+          safetyTimer=null;
+        }
+        isLoopRunning=false;
         setTimeout(recordLoop,1000);
       };
 
       // Poll in 350ms intervals
       sliceRecorder.start(350);
-      // Max safety ceiling for continuous speech: 6.8 seconds
-      setTimeout(()=>{
-        if(sliceRecorder&&sliceRecorder.state==='recording'){
-          try{sliceRecorder.stop();}catch(e){}
-        }
-      },6800);
+
+      // Max safety ceiling for uninterrupted talking: 7.5 seconds
+      safetyTimer=setTimeout(()=>{
+        stopActiveRecorder();
+      },7500);
     }
 
     track.addEventListener('ended',()=>{

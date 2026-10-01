@@ -140,16 +140,18 @@ function broadcastToClients(data) {
 // ============================================================================
 // 3. Gemini — Audio Transcription + Translation (single API call)
 // ============================================================================
-const AUDIO_SYSTEM_PROMPT = `You are VACFA Translate, an expert real-time interpreter for African public health summits.
-1. Transcribe the exact words spoken in the audio segment.
-2. Detect language (en, fr, pt, or sw).
-3. Translate into English (en), French (fr), Portuguese (pt), and Swahili (sw).
-4. Strictly enforce VACFA terms: NITAG, AEFI->MAPI/EAPV/AEFI, EPI->PEV/PAV/EPI, VVM, Gavi, mRNA, Zero-dose child, Cold chain.
-If there is NO intelligible speech, reply ONLY: {"noSpeech":true}
+const AUDIO_SYSTEM_PROMPT = `You are VACFA Translate, an expert real-time conference interpreter for African public health summits.
+1. Speaker Accent: Speakers frequently speak English with a South African accent (en-ZA), African English, French, Portuguese, or Swahili. Accurately transcribe South African English pronunciation, vowels (e.g. kit/pin vowel shifts, glottal stops, non-rhotic cadence), colloquial phrasing, and medical terminology into accurate English.
+2. Complete Sentences: Transcribe in full, coherent, natural sentences. Do not truncate words or output isolated broken syllables.
+3. Detect language (en, fr, pt, or sw).
+4. Translate into English (en), French (fr), Portuguese (pt), and Swahili (sw).
+5. Strictly enforce VACFA terms: NITAG, AEFI->MAPI/EAPV/AEFI, EPI->PEV/PAV/EPI, VVM, Gavi, mRNA, Zero-dose child, Cold chain.
+If there is NO intelligible speech or only room background noise, reply ONLY: {"noSpeech":true}
 Output ONLY valid compact JSON:
 {"transcript":"...","detectedLanguage":"en","speaker":"Speaker","translations":{"en":"...","fr":"...","pt":"...","sw":"..."},"detectedGlossaryTerms":[]}`;
 
 let audioCallCount = 0;
+let lastSpokenContext = '';
 
 /**
  * Sends a WebM audio chunk to Gemini for combined STT + translation.
@@ -177,6 +179,10 @@ async function transcribeAndTranslateAudio(base64Audio) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 12000);
 
+      const promptText = lastSpokenContext
+        ? `Preceding context: "${lastSpokenContext}". Transcribe the continuous South African English speech in this audio chunk, preserving complete thoughts.`
+        : 'Transcribe and translate this South African English speech segment into complete, natural sentences.';
+
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -184,7 +190,7 @@ async function transcribeAndTranslateAudio(base64Audio) {
           contents: [{
             parts: [
               { inlineData: { mimeType: 'audio/webm', data: base64Audio } },
-              { text: 'Transcribe and translate this audio segment.' },
+              { text: promptText },
             ],
           }],
           systemInstruction: { parts: [{ text: AUDIO_SYSTEM_PROMPT }] },
@@ -412,25 +418,32 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
       const startTime=Date.now();
 
       try{
-        sliceRecorder=new MediaRecorder(stream,{mimeType:'audio/webm;codecs=opus'});
+        sliceRecorder=new MediaRecorder(stream,{
+          mimeType:'audio/webm;codecs=opus',
+          audioBitsPerSecond:128000
+        });
       }catch(e){
-        console.error(LOG,'MediaRecorder create failed:',e);
-        setTimeout(recordLoop,1500);
-        return;
+        try{
+          sliceRecorder=new MediaRecorder(stream);
+        }catch(e2){
+          console.error(LOG,'MediaRecorder create failed:',e2);
+          setTimeout(recordLoop,1500);
+          return;
+        }
       }
 
       sliceRecorder.ondataavailable=(e)=>{
         if(e.data&&e.data.size>0){
           sliceChunks.push(e.data);
-          // In 350ms Opus audio: silence/room tone is < 240 bytes; active voice is 500-1800 bytes
-          if(e.data.size < 240){
+          // In 350ms 128kbps Opus audio: silence/room tone is < 300 bytes; active speech is 800-2500 bytes
+          if(e.data.size < 300){
             consecutiveSilence++;
           }else{
             consecutiveSilence=0;
           }
           const elapsed=Date.now()-startTime;
-          // Natural sentence boundary: if >= 3.0s recorded AND speaker paused for >= 700ms (2 chunks)
-          if(elapsed>=3000 && consecutiveSilence>=2){
+          // Natural sentence boundary: require >= 4.8s of speech AND at least 1.0s (3 chunks) of real pause
+          if(elapsed>=4800 && consecutiveSilence>=3){
             if(sliceRecorder&&sliceRecorder.state==='recording'){
               try{sliceRecorder.stop();}catch(err){}
             }
@@ -445,8 +458,8 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         if(chunks.length>0){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            // Skip digital silence / background noise (Opus active speech is > 4.5KB)
-            if(blob.size > 4500){
+            // Skip digital silence / background noise (Opus active speech is > 5.5KB)
+            if(blob.size > 5500){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -470,13 +483,14 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         setTimeout(recordLoop,1000);
       };
 
-      // Poll in 350ms intervals to catch natural breath pauses
+      // Poll in 350ms intervals
       sliceRecorder.start(350);
+      // Max safety ceiling for continuous speech: 6.8 seconds
       setTimeout(()=>{
         if(sliceRecorder&&sliceRecorder.state==='recording'){
           try{sliceRecorder.stop();}catch(e){}
         }
-      },5200);
+      },6800);
     }
 
     track.addEventListener('ended',()=>{
@@ -1006,6 +1020,7 @@ async function main() {
         if (result && result.transcript && result.transcript.trim()) {
           const spoken = result.transcript.trim();
           if (checkAndRecordPhrase(spoken)) {
+            lastSpokenContext = spoken.slice(-150);
             const speaker = result.speaker || 'Meeting Speaker';
             console.log(`\n🎙️  [${speaker}] (AI: ${elapsed}ms): "${spoken}"`);
             console.log(`🌍  FR: "${result.translations?.fr}" | PT: "${result.translations?.pt}" | SW: "${result.translations?.sw}"`);

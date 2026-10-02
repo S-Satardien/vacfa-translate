@@ -21,6 +21,7 @@ import {
   EyeOff,
   Maximize2,
   Minimize2,
+  Crop,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Session, CaptionEntry, GlossaryTerm } from '@/lib/types';
@@ -109,7 +110,17 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [videoFeedUrl, setVideoFeedUrl] = useState<string>('http://127.0.0.1:9876/video');
   const [isVideoLoading, setIsVideoLoading] = useState(true);
   const [showCinemaSubtitles, setShowCinemaSubtitles] = useState(true);
+  const [cropPresentation, setCropPresentation] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const videoContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   // AI & Glossary state
   const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
@@ -906,7 +917,16 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                 <div className={styles.videoControls}>
                   <button
                     type="button"
-                    className={styles.videoControlBtn}
+                    className={`${styles.videoControlBtn} ${cropPresentation ? styles.videoControlBtnActive : ''}`}
+                    onClick={() => setCropPresentation(!cropPresentation)}
+                    title={cropPresentation ? 'Focus on Slides Only (Click to show full window & actions)' : 'Show Full Window (Click to focus on slides)'}
+                  >
+                    <Crop size={13} />
+                    {cropPresentation ? 'Focus: Slides Only' : 'Focus: Full Window'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.videoControlBtn} ${showCinemaSubtitles ? styles.videoControlBtnActive : ''}`}
                     onClick={() => setShowCinemaSubtitles(!showCinemaSubtitles)}
                     title={showCinemaSubtitles ? 'Hide video overlay subtitles' : 'Show video overlay subtitles'}
                   >
@@ -915,7 +935,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   </button>
                   <button
                     type="button"
-                    className={styles.videoControlBtn}
+                    className={`${styles.videoControlBtn} ${isFullscreen ? styles.videoControlBtnActive : ''}`}
                     onClick={() => {
                       if (!document.fullscreenElement && videoContainerRef.current) {
                         videoContainerRef.current.requestFullscreen?.().catch(() => {});
@@ -925,7 +945,8 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                     }}
                     title="Toggle Fullscreen Video"
                   >
-                    <Maximize2 size={13} /> Fullscreen
+                    {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                    {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
                   </button>
                   <button
                     type="button"
@@ -942,7 +963,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                 <img
                   src={videoFeedUrl}
                   alt="Live Meeting Video Feed"
-                  className={styles.videoFeedImg}
+                  className={`${styles.videoFeedImg} ${cropPresentation ? styles.videoFeedCrop : ''}`}
                   onLoad={() => setIsVideoLoading(false)}
                   onError={() => setIsVideoLoading(true)}
                 />

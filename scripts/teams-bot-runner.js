@@ -876,6 +876,91 @@ const CAPTION_OBSERVER_SCRIPT = `
 })();
 `;
 
+/**
+ * Script D — Teams Stage Optimizer
+ *
+ * Removes non-essential Teams UI chrome (top toolbar, participant side tiles)
+ * so the shared presentation / screen-share takes up 100% of the viewport.
+ */
+const TEAMS_STAGE_OPTIMIZER_SCRIPT = `
+(function() {
+  function optimizeTeamsStage() {
+    try {
+      if (!document.getElementById('vacfa-clean-stage-styles')) {
+        const style = document.createElement('style');
+        style.id = 'vacfa-clean-stage-styles';
+        style.textContent = \`
+          /* Hide Teams top header and meeting call bar */
+          div[data-tid="calling-top-bar"],
+          div[class*="calling-top-bar"],
+          div[class*="CallingTopBar"],
+          header[role="banner"],
+          nav[role="navigation"],
+          div[class*="header-bar"] {
+            display: none !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+          }
+
+          /* Hide participant side gallery avatar tiles when content/slides are shared */
+          div[data-tid="calling-side-gallery"],
+          div[class*="side-gallery"],
+          div[class*="SideGallery"],
+          div[data-tid="side-gallery-item"],
+          div[class*="sideGallery"] {
+            display: none !important;
+            width: 0 !important;
+            min-width: 0 !important;
+            opacity: 0 !important;
+          }
+
+          /* Hide side roster / chat panels that occupy presentation stage space */
+          div[data-tid="roster-panel"],
+          div[class*="roster-panel"],
+          div[class*="right-panel"] {
+            display: none !important;
+            width: 0 !important;
+          }
+
+          /* Maximize presentation / screen share surface to full viewport */
+          div[data-tid="screen-share-surface"],
+          div[data-tid="stage-view"],
+          div[data-tid="calling-active-speaker"],
+          div[data-tid="presentation-layout"],
+          div[class*="stage-view"],
+          div[class*="screen-share-surface"] {
+            width: 100vw !important;
+            height: 100vh !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            z-index: 100 !important;
+          }
+
+          video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+          }
+        \`;
+        (document.head || document.documentElement).appendChild(style);
+      }
+    } catch {}
+  }
+
+  optimizeTeamsStage();
+  setInterval(optimizeTeamsStage, 1500);
+})();
+`;
+
 // ============================================================================
 // 8. Main Orchestrator
 // ============================================================================
@@ -915,7 +1000,7 @@ async function main() {
     '--disable-blink-features=AutomationControlled',
     '--use-fake-ui-for-media-stream',
     '--autoplay-policy=no-user-gesture-required',
-    '--window-size=1280,800',
+    '--window-size=1920,1080',
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     '--remote-allow-origins=*',
@@ -1011,19 +1096,22 @@ async function main() {
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: AUDIO_INTERCEPTOR_SCRIPT });
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: PRE_JOIN_SCRIPT });
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: CAPTION_OBSERVER_SCRIPT });
-    console.log('[Bot] ✅ Pre-load interceptors armed for page loads');
+    await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: TEAMS_STAGE_OPTIMIZER_SCRIPT });
+    console.log('[Bot] ✅ Pre-load interceptors & stage optimizer armed for page loads');
 
     // 5. Evaluate immediately on the currently loaded page
     await cdpSend('Runtime.evaluate', { expression: AUDIO_INTERCEPTOR_SCRIPT });
     await cdpSend('Runtime.evaluate', { expression: PRE_JOIN_SCRIPT });
     await cdpSend('Runtime.evaluate', { expression: CAPTION_OBSERVER_SCRIPT });
-    console.log('[Bot] ✅ Interceptors activated on current Teams tab');
+    await cdpSend('Runtime.evaluate', { expression: TEAMS_STAGE_OPTIMIZER_SCRIPT });
+    console.log('[Bot] ✅ Interceptors & stage optimizer activated on current Teams tab');
 
     // 6. Keep active monitor alive to handle dynamically added elements / iframes
     setInterval(() => {
       cdpSend('Runtime.evaluate', { expression: PRE_JOIN_SCRIPT }).catch(() => {});
       cdpSend('Runtime.evaluate', { expression: CAPTION_OBSERVER_SCRIPT }).catch(() => {});
-    }, 2500);
+      cdpSend('Runtime.evaluate', { expression: TEAMS_STAGE_OPTIMIZER_SCRIPT }).catch(() => {});
+    }, 2000);
 
     // 7. Dispatch Ctrl+Shift+C key combination via CDP hardware input
     setTimeout(async () => {
@@ -1046,16 +1134,16 @@ async function main() {
       } catch {}
     }, 12000);
 
-    // 9. Start CDP Screencast for Live Meeting Video Relay (Approach A)
+    // 9. Start CDP Screencast for Live Meeting Video Relay (Approach A) Full HD 1080p
     try {
       await cdpSend('Page.startScreencast', {
         format: 'jpeg',
-        quality: 60,
-        maxWidth: 1280,
-        maxHeight: 720,
+        quality: 80,
+        maxWidth: 1920,
+        maxHeight: 1080,
         everyNthFrame: 2,
       });
-      console.log(`[Bot] 🎥 Live Screencast active (1280x720 JPEG) → http://127.0.0.1:${RELAY_PORT}/video`);
+      console.log(`[Bot] 🎥 Live Screencast active (Full HD 1920x1080 JPEG @ 80%) → http://127.0.0.1:${RELAY_PORT}/video`);
       broadcastToClients({ type: 'video_status', active: true, videoUrl: `http://127.0.0.1:${RELAY_PORT}/video` });
     } catch (scErr) {
       console.warn('[Bot] Screencast start notice:', scErr.message);

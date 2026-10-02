@@ -103,9 +103,42 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 16px;
   padding-bottom: 32px;
+  scroll-behavior: smooth;
+  position: relative;
+}
+
+.captionsSpacer {
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.jumpToLatestBtn {
+  position: sticky;
+  bottom: 8px;
+  align-self: center;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: var(--vacfa-red, #C41E3A);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  transition: all 0.2s ease;
+  backdrop-filter: blur(8px);
+}
+
+.jumpToLatestBtn:hover {
+  background: var(--vacfa-red-dark, #9B1830);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(196, 30, 58, 0.5);
 }
 
 .captionBox {

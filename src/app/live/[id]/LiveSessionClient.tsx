@@ -22,6 +22,7 @@ import {
   Maximize2,
   Minimize2,
   Crop,
+  ArrowDown,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Session, CaptionEntry, GlossaryTerm } from '@/lib/types';
@@ -148,12 +149,34 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     setHasApiKey(Boolean(getStoredApiKey()));
   }, []);
 
-  // Auto-scroll captions container
+  // User scroll detection state (allows users to scroll up without being yanked back down)
+  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
+  const captionsScrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleCaptionsScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // If distance from bottom is greater than 80px, user is deliberately reading past captions
+    if (distanceToBottom > 80) {
+      setIsUserScrolledUp(true);
+    } else {
+      setIsUserScrolledUp(false);
+    }
+  };
+
+  const scrollToBottom = (smooth = true) => {
+    setIsUserScrolledUp(false);
+    if (captionsEndRef.current) {
+      captionsEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+    }
+  };
+
+  // Smart Auto-scroll: only scroll down automatically if user is NOT reviewing previous captions
   useEffect(() => {
-    if (showCaptions) {
+    if (showCaptions && !isUserScrolledUp) {
       captionsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [captions, partialText, showCaptions]);
+  }, [captions, partialText, showCaptions, isUserScrolledUp]);
 
   const playedCaptionIdsRef = useRef<Set<string>>(new Set());
 
@@ -1011,7 +1034,13 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         )}
 
         {showCaptions ? (
-          <div className={styles.captionsContainer}>
+          <div
+            className={styles.captionsContainer}
+            ref={captionsScrollContainerRef}
+            onScroll={handleCaptionsScroll}
+          >
+            {/* Top spacer maintains bottom alignment when captions are few, without blocking scroll-up */}
+            <div className={styles.captionsSpacer} />
             {captions.length === 0 && !partialText && (
               <div style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--grey-400)' }}>
                 <div style={{ display: 'inline-flex', padding: '16px', borderRadius: '50%', background: 'rgba(196, 30, 58, 0.12)', color: 'var(--vacfa-red-light)', marginBottom: '1rem' }}>
@@ -1077,6 +1106,18 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
               )}
             </AnimatePresence>
             <div ref={captionsEndRef} />
+
+            {/* Floating button to resume live auto-scroll when user has scrolled up */}
+            {isUserScrolledUp && (
+              <button
+                type="button"
+                className={styles.jumpToLatestBtn}
+                onClick={() => scrollToBottom(true)}
+              >
+                <ArrowDown size={14} className="animate-bounce" />
+                <span>Resume Live Scroll</span>
+              </button>
+            )}
           </div>
         ) : (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--grey-400)' }}>

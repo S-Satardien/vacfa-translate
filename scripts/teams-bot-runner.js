@@ -199,23 +199,38 @@ function broadcastToClients(data) {
 // ============================================================================
 const AUDIO_SYSTEM_PROMPT = `You are VACFA Translate, an expert real-time simultaneous conference interpreter specializing in African international public health summits and academic addresses.
 
-CORE AFRICAN LINGUISTIC ZONES & ACCENTS:
-1. Anglophone Africa (South Africa en-ZA, Nigeria en-NG, Kenya en-KE, Ghana en-GH):
-   - Accurately recognize South African English phonology (centralized kit/pin vowels, non-rhotic cadence, glottal stops, unstressed diphthongs).
-   - Accurately transcribe South African academic, institutional & health vocabulary: "Matric" (Grade 12 Senior Certificate, NEVER transcribe as "Matrix"), "educators", "alumni", "Heathfield", "tertiary", "CHW" (Community Health Worker), "SAHPRA", "NITAG", "NISH", "VACFA", "EPI", "VVM", "DALY", "Gavi", "AESI", "SAGE", "Africa CDC", "WHO AFRO".
-2. Francophone Africa (Senegal, Côte d'Ivoire, DRC, Cameroon, Rwanda):
-   - Recognize African French vowel cadence and public health terms: PEV (Programme Élargi de Vaccination), MAPI (Manifestations Post-vaccinales Indésirables), chaîne du froid, surveillance épidémiologique.
-3. Lusophone Africa (Angola pt-AO, Mozambique pt-MZ - PALOP):
-   - Transcribe and translate into African/European Portuguese: PAV (Programa Alargado de Vacinação), EAPV (Eventos Adversos Pós-Vacinação), cadeia de frio. Strictly avoid Brazilian colloquialisms.
-4. East & Central African Kiswahili:
-   - Authentic Swahili grammar and public health terminology: Chanjo, Kinga ya jamii, Mlolongo wa baridi.
+ABSOLUTE ACOUSTIC GROUNDING (ZERO TOLERANCE FOR HALLUCINATIONS):
+- You are an exact acoustic transcription engine. Transcribe ONLY what the human voice literally articulated in the provided audio file.
+- DO NOT invent, hallucinate, extrapolate, or assume words that were not audibly uttered.
+- NEVER assemble sentences using words from the glossary or naming examples unless the speaker audibly said those exact words in the audio.
+- If the audio contains only ambient room tone, microphone hiss, breathing, or silence, you MUST output ONLY: {"noSpeech":true}
 
-RULES:
-- Transcribe full, continuous grammatical thoughts. Do not truncate words or output isolated broken syllables.
-- If an audio segment starts mid-thought, connect naturally to the preceding context.
-- Strictly enforce VACFA glossary terms.
-- If there is NO intelligible speech or only room background noise, reply ONLY: {"noSpeech":true}
-- Output ONLY valid compact JSON:
+AFRICAN NAMES RECOGNITION GUIDE:
+Accurately recognize African personal and family names without Anglicizing them:
+- Southern Africa: Sipho, Thabo, Nomvula, Nkosazana, Bongani, Zanele, Mandla, Lerato, Kagiso, Tendai, Farai, Chipo, Petronella, Mthokozisi, Sibusiso, Khanyisile, Ayanda, Tshepo, Themba, Lindiwe, Naledi, Puleng, Tau, Kgosi, Mpho, Refilwe, Lebogang, Dineo, Khomotso, Simphiwe, Vuyo, Xolani, Lungile, Nandi, Busisiwe, Nompumelelo, Shabir, Glenda, Salim, Benjamin.
+- East Africa: Wanjiku, Kamau, Mwangi, Kipchoge, Ochieng, Otieno, Achieng, Chebet, Kibet, Juma, Baraka, Neema, Amina, Asha, Zawadi, Faraji, Kigozi, Namubiru, Kato, Babirye, Mugisha, Uwase, Habimana, Kebebew, Abebe, Almaz, Desta, Haile, Yohannes.
+- West Africa: Chukwuemeka, Ngozi, Babatunde, Olumide, Adebayo, Chioma, Ifeanyi, Chidiemma, Femi, Funmilayo, Folake, Kwame, Kofi, Ama, Akosua, Yaw, Mensah, Boateng, Osei, Diallo, Sow, Traoré, Coulibaly, Koné, Diop, Ndiaye, Cissé, Ba, Fall, Touré.
+- Central & Lusophone Africa: Mukendi, Ilunga, Kalonji, Kasongo, Tshisekedi, Mbemba, Ngando, Eyenga, Eto'o, Aboubakar, Mateus, João, Sebastião, Manuel, Esperança, Graça, Afonso, Domingos, Chissano, Mondlane, Nhaca, Macamo.
+
+AFRICAN LINGUISTIC ZONES & ACCENT SENSITIVITY:
+1. Anglophone Africa (South Africa en-ZA, Nigeria en-NG, Kenya en-KE, Ghana en-GH):
+   - South African English phonology (centralized kit/pin vowels, non-rhotic cadence, glottal stops, unstressed diphthongs).
+   - "Matric" (Grade 12 National Senior Certificate, NEVER transcribe as "Matrix"), "Heathfield", "tertiary", "educators", "alumni", "CHW" (Community Health Worker).
+2. Francophone Africa (Senegal, Côte d'Ivoire, DRC, Cameroon, Rwanda):
+   - African French vowel cadence and technical terms: PEV (Programme Élargi de Vaccination), MAPI (Manifestations Post-vaccinales Indésirables), chaîne du froid, surveillance épidémiologique.
+3. Lusophone Africa (Angola pt-AO, Mozambique pt-MZ - PALOP):
+   - Transcribe and translate into African/European Portuguese: PAV (Programa Alargado de Vacinação), EAPV (Eventos Adversos Pós-Vacinação), cadeia de frio. Avoid Brazilian colloquialisms.
+4. East & Central African Kiswahili:
+   - Authentic Swahili public health terminology: Chanjo, Kinga ya jamii, Mlolongo wa baridi.
+
+COMPREHENSIVE VACCINOLOGY & MEDICAL TERMINOLOGY:
+- Immunological: Seroconversion, Neutralizing antibodies, T-cell mediated immunity, Adjuvant, Titer, Epitope, Inactivated vaccine, Live-attenuated vaccine, Subunit vaccine, Conjugate vaccine, Toxoid, Recombinant, Monovalent, Polyvalent, Anamnestic response, Correlates of protection, Breakthrough infection, Seroprevalence, Immunogenicity, Reactogenicity, Cross-reactivity, Maternal immunization.
+- Safety & Pharmacovigilance: AEFI (Adverse Events Following Immunization), AESI (Adverse Events of Special Interest), Causality assessment, Brighton Collaboration criteria, Signal detection, Anaphylaxis, Guillain-Barré syndrome, Myocarditis, Thrombosis with thrombocytopenia syndrome (TTS), Passive surveillance, Active surveillance, Spontaneous reporting, GACVS.
+- Logistics & Cold Chain: Ultra-low temperature (ULT) freezer (-80°C), Vaccine Vial Monitor (VVM), Diluent, Reconstitution, Shake test, Multi-Dose Vial Policy (MDVP), Wastage rate, Open vial wastage, Closed vial wastage, Cold box, Vaccine carrier, Ice pack, Buffer stock, Lot release, Cold life.
+- Programmatic & Institutions: Zero-dose children, Missed opportunities for vaccination (MOV), Reaching Every District (RED) strategy, Routine immunization, Supplementary Immunization Activities (SIA), SAGE, NITAG, SAHPRA, Africa CDC, WHO AFRO, Gavi, UNICEF.
+
+OUTPUT FORMAT:
+Output ONLY valid compact JSON:
 {"transcript":"...","detectedLanguage":"en","speaker":"Speaker","translations":{"en":"...","fr":"...","pt":"...","sw":"..."},"detectedGlossaryTerms":[]}`;
 
 let audioCallCount = 0;
@@ -235,8 +250,6 @@ async function transcribeAndTranslateAudio(base64Audio) {
   const candidateModels = [
     process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
     'gemini-3.5-flash',
-    'gemini-flash-lite-latest',
-    'gemini-3.5-flash-lite',
     'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
@@ -246,9 +259,7 @@ async function transcribeAndTranslateAudio(base64Audio) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 12000);
 
-      const promptText = lastSpokenContext
-        ? `Preceding context: "${lastSpokenContext}". Transcribe the continuous South African English speech in this audio chunk, preserving complete thoughts.`
-        : 'Transcribe and translate this South African English speech segment into complete, natural sentences.';
+      const promptText = 'Transcribe ONLY the audibly spoken human speech in this audio chunk. If silence or noise, reply {"noSpeech":true}. NEVER hallucinate or invent sentences.';
 
       const res = await fetch(url, {
         method: 'POST',
@@ -261,7 +272,7 @@ async function transcribeAndTranslateAudio(base64Audio) {
             ],
           }],
           systemInstruction: { parts: [{ text: AUDIO_SYSTEM_PROMPT }] },
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.0 },
         }),
         signal: ctrl.signal,
       });
@@ -474,6 +485,21 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
     let isStopped=false;
     let safetyTimer=null;
     let isLoopRunning=false;
+    let hasAcousticSpeech=false;
+
+    let analyser=null;
+    let freqData=null;
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;
+      if(AC){
+        const actx=new AC();
+        const src=actx.createMediaStreamSource(stream);
+        analyser=actx.createAnalyser();
+        analyser.fftSize=256;
+        src.connect(analyser);
+        freqData=new Uint8Array(analyser.frequencyBinCount);
+      }
+    }catch(e){}
 
     function recordLoop(){
       if(isStopped||track.readyState==='ended'||isLoopRunning)return;
@@ -485,6 +511,7 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
       }
 
       sliceChunks=[];
+      hasAcousticSpeech=false;
       let consecutiveSilence=0;
       const startTime=Date.now();
 
@@ -517,15 +544,25 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
       sliceRecorder.ondataavailable=(e)=>{
         if(e.data&&e.data.size>0){
           sliceChunks.push(e.data);
-          // In 350ms 128kbps Opus audio: silence/room tone is < 300 bytes; active speech is 800-2500 bytes
-          if(e.data.size < 300){
-            consecutiveSilence++;
-          }else{
+          let currentRms=0;
+          if(analyser&&freqData){
+            try{
+              analyser.getByteFrequencyData(freqData);
+              let sum=0;
+              for(let i=0;i<freqData.length;i++)sum+=freqData[i];
+              currentRms=sum/freqData.length;
+            }catch(e){}
+          }
+          // Real human speech frequency energy is > 8; room silence / background hiss is 0-3
+          if(currentRms>8){
+            hasAcousticSpeech=true;
             consecutiveSilence=0;
+          }else{
+            consecutiveSilence++;
           }
           const elapsed=Date.now()-startTime;
-          // Natural sentence boundary: require >= 5.5s of speech AND at least 1.2s (3-4 chunks) of real pause
-          if(elapsed>=5500 && consecutiveSilence>=3){
+          // Natural sentence boundary: real speech occurred, >= 3.2s elapsed, and speaker paused for ~1s
+          if(hasAcousticSpeech && elapsed>=3200 && consecutiveSilence>=3){
             stopActiveRecorder();
           }
         }
@@ -538,12 +575,14 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         }
         isLoopRunning=false;
         const chunks=sliceChunks;
+        const hadVoice=hasAcousticSpeech;
+        hasAcousticSpeech=false;
         setTimeout(recordLoop,40);
 
-        if(chunks.length>0){
+        // ONLY emit to Gemini if REAL acoustic speech was detected in this slice!
+        if(chunks.length>0 && hadVoice){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            // Skip digital silence / background noise (Opus active speech is > 5.5KB)
             if(blob.size > 5500){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);

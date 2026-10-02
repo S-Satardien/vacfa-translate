@@ -16,6 +16,11 @@ import {
   Bot,
   Play,
   Headphones,
+  Tv,
+  Eye,
+  EyeOff,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Session, CaptionEntry, GlossaryTerm } from '@/lib/types';
@@ -97,6 +102,14 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [partialText, setPartialText] = useState('');
   const [currentSpeaker, setCurrentSpeaker] = useState('');
   const captionsEndRef = useRef<HTMLDivElement>(null);
+
+  // Approach A: Live Meeting Video Stage (Screencast & MJPEG Relay)
+  const [videoFeedActive, setVideoFeedActive] = useState(false);
+  const [showVideoStage, setShowVideoStage] = useState(true);
+  const [videoFeedUrl, setVideoFeedUrl] = useState<string>('http://127.0.0.1:9876/video');
+  const [isVideoLoading, setIsVideoLoading] = useState(true);
+  const [showCinemaSubtitles, setShowCinemaSubtitles] = useState(true);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
 
   // AI & Glossary state
   const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
@@ -417,6 +430,13 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         setPartialText(data.text);
       } else if (data.type === 'bot_status') {
         setIsBotRelayConnected(Boolean(data.connected));
+        if (data.videoAvailable) {
+          setVideoFeedActive(true);
+          if (data.videoUrl) setVideoFeedUrl(data.videoUrl);
+        }
+      } else if (data.type === 'video_status') {
+        setVideoFeedActive(Boolean(data.active));
+        if (data.videoUrl) setVideoFeedUrl(data.videoUrl);
       }
     }
 
@@ -867,8 +887,108 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         </button>
       </div>
 
-      {/* Center Panel (Captions) */}
+      {/* Center Panel (Captions & Meeting Video Feed) */}
       <div className={styles.centerPanel}>
+        {/* Approach A: Live Meeting Video Stage (Screencast & Presentation Relay) */}
+        {(isBotRelayConnected || videoFeedActive) && (
+          showVideoStage ? (
+            <div className={styles.videoStage} ref={videoContainerRef}>
+              <div className={styles.videoHeader}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span className={styles.videoBadge}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#fff', display: 'inline-block' }} className="animate-pulse" />
+                    LIVE MEETING FEED
+                  </span>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--grey-400)', fontWeight: 500 }}>
+                    {currentSession.meetingIntegration?.platform === 'zoom' ? 'Zoom Meeting' : 'Microsoft Teams'}
+                  </span>
+                </div>
+                <div className={styles.videoControls}>
+                  <button
+                    type="button"
+                    className={styles.videoControlBtn}
+                    onClick={() => setShowCinemaSubtitles(!showCinemaSubtitles)}
+                    title={showCinemaSubtitles ? 'Hide video overlay subtitles' : 'Show video overlay subtitles'}
+                  >
+                    <Sparkles size={13} />
+                    {showCinemaSubtitles ? 'Cinema Subs: ON' : 'Cinema Subs: OFF'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.videoControlBtn}
+                    onClick={() => {
+                      if (!document.fullscreenElement && videoContainerRef.current) {
+                        videoContainerRef.current.requestFullscreen?.().catch(() => {});
+                      } else if (document.fullscreenElement) {
+                        document.exitFullscreen?.().catch(() => {});
+                      }
+                    }}
+                    title="Toggle Fullscreen Video"
+                  >
+                    <Maximize2 size={13} /> Fullscreen
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.videoControlBtn}
+                    onClick={() => setShowVideoStage(false)}
+                    title="Hide Video (Save bandwidth / Audio & Captions only)"
+                  >
+                    <EyeOff size={13} /> Hide Video
+                  </button>
+                </div>
+              </div>
+
+              <div className={styles.videoViewport}>
+                <img
+                  src={videoFeedUrl}
+                  alt="Live Meeting Video Feed"
+                  className={styles.videoFeedImg}
+                  onLoad={() => setIsVideoLoading(false)}
+                  onError={() => setIsVideoLoading(true)}
+                />
+                {isVideoLoading && (
+                  <div className={styles.videoPlaceholder} style={{ position: 'absolute', inset: 0, background: '#0a0a0a' }}>
+                    <Bot size={28} className="animate-pulse text-vacfa-red" />
+                    <span style={{ fontSize: '0.85rem' }}>Syncing video frames from Teams meeting...</span>
+                  </div>
+                )}
+
+                {/* Cinema Overlay Subtitles directly on the video */}
+                {showCinemaSubtitles && captions.length > 0 && (
+                  <div className={styles.videoCinemaSubtitles}>
+                    {(() => {
+                      const latest = captions[captions.length - 1];
+                      const txt = latest.translations?.[captionLang] || latest.originalText;
+                      return (
+                        <>
+                          <div className={styles.videoCinemaSpeaker}>{latest.speaker}</div>
+                          <div className={styles.videoCinemaText}>{txt}</div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className={styles.videoStageCollapsed}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Tv size={16} color="var(--grey-400)" />
+                <span style={{ fontSize: '0.82rem', color: 'var(--grey-400)' }}>
+                  Live Meeting Video is hidden (Low Bandwidth Mode)
+                </span>
+              </div>
+              <button
+                type="button"
+                className={styles.videoControlBtn}
+                onClick={() => setShowVideoStage(true)}
+              >
+                <Eye size={13} /> Show Video
+              </button>
+            </div>
+          )
+        )}
+
         {showCaptions ? (
           <div className={styles.captionsContainer}>
             {captions.length === 0 && !partialText && (

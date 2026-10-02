@@ -76,6 +76,8 @@ console.log('-'.repeat(77));
 // 2. Local Relay Server (WebSocket + SSE → VACFA Live Session App)
 // ============================================================================
 const sseClients = new Set();
+const mjpegClients = new Set();
+let latestFrameBuffer = null;
 let wss = null;
 
 const relayServer = http.createServer((req, res) => {
@@ -86,13 +88,56 @@ const relayServer = http.createServer((req, res) => {
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
+  // Live Meeting Video Feed (MJPEG multipart stream - Approach A)
+  if (req.url === '/video' || req.url.startsWith('/video')) {
+    res.writeHead(200, {
+      'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Connection': 'close',
+      'Access-Control-Allow-Origin': '*',
+    });
+    mjpegClients.add(res);
+    console.log(`[Relay] 🎥 Live Video client connected (total: ${mjpegClients.size})`);
+    if (latestFrameBuffer) {
+      try {
+        res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latestFrameBuffer.length}\r\n\r\n`);
+        res.write(latestFrameBuffer);
+        res.write('\r\n');
+      } catch {}
+    }
+    req.on('close', () => {
+      mjpegClients.delete(res);
+      console.log(`[Relay] Video client disconnected (remaining: ${mjpegClients.size})`);
+    });
+    return;
+  }
+
+  // Single Frame Snapshot for fallback polling
+  if (req.url === '/snapshot' || req.url.startsWith('/snapshot')) {
+    if (latestFrameBuffer) {
+      res.writeHead(200, {
+        'Content-Type': 'image/jpeg',
+        'Content-Length': latestFrameBuffer.length,
+        'Cache-Control': 'no-cache, no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(latestFrameBuffer);
+    } else {
+      res.writeHead(503, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+      res.end('No frame available yet');
+    }
+    return;
+  }
+
   if (req.url === '/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
-    res.write(`data: ${JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME, videoAvailable: Boolean(latestFrameBuffer), videoUrl: `http://127.0.0.1:${RELAY_PORT}/video` })}\n\n`);
     sseClients.add(res);
     console.log(`[Relay] SSE client connected (total: ${sseClients.size})`);
     req.on('close', () => sseClients.delete(res));
@@ -100,14 +145,20 @@ const relayServer = http.createServer((req, res) => {
   }
   if (req.url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'running', botName: BOT_NAME, clients: sseClients.size }));
+    res.end(JSON.stringify({
+      status: 'running',
+      botName: BOT_NAME,
+      clients: sseClients.size,
+      videoClients: mjpegClients.size,
+      videoActive: Boolean(latestFrameBuffer),
+    }));
     return;
   }
   res.writeHead(404); res.end();
 });
 
 relayServer.listen(RELAY_PORT, '127.0.0.1', () => {
-  console.log(`[Relay] ws://127.0.0.1:${RELAY_PORT}  |  http://127.0.0.1:${RELAY_PORT}/events`);
+  console.log(`[Relay] ws://127.0.0.1:${RELAY_PORT}  |  http://127.0.0.1:${RELAY_PORT}/video  |  /events`);
 });
 
 try {
@@ -115,7 +166,13 @@ try {
   wss = new WebSocketServer({ server: relayServer });
   wss.on('connection', (client) => {
     console.log(`[Relay] WebSocket client connected (total: ${wss.clients.size})`);
-    client.send(JSON.stringify({ type: 'bot_status', connected: true, botName: BOT_NAME }));
+    client.send(JSON.stringify({
+      type: 'bot_status',
+      connected: true,
+      botName: BOT_NAME,
+      videoAvailable: true,
+      videoUrl: `http://127.0.0.1:${RELAY_PORT}/video`,
+    }));
   });
 } catch { console.log('[Relay] ws package not found — SSE-only mode'); }
 
@@ -220,8 +277,8 @@ async function transcribeAndTranslateAudio(base64Audio) {
         }
         console.warn(`[Gemini Audio] ${model} HTTP ${res.status}: ${errMsg.slice(0, 160)}`);
         if (res.status === 429) {
-          console.warn(`[Gemini Audio] 15 RPM Free limit reached. Pausing 2.5s before retry...`);
-          await new Promise((r) => setTimeout(r, 2500));
+          console.warn(`[Gemini Audio] Rate limit reached. Pausing 500ms before retry...`);
+          await new Promise((r) => setTimeout(r, 500));
         }
         continue;
       }
@@ -989,12 +1046,19 @@ async function main() {
       } catch {}
     }, 12000);
 
-    // 8. Verify CART caption endpoint if configured
-    if (CART_URL) {
-      setTimeout(async () => {
-        const ok = await sendCartCaption(CART_URL, 'VACFA AI Interpreter online.');
-        console.log(`[Bot] CART Ingestion Endpoint: ${ok ? 'ACTIVE' : 'Waiting for meeting'}`);
-      }, 5000);
+    // 9. Start CDP Screencast for Live Meeting Video Relay (Approach A)
+    try {
+      await cdpSend('Page.startScreencast', {
+        format: 'jpeg',
+        quality: 60,
+        maxWidth: 1280,
+        maxHeight: 720,
+        everyNthFrame: 2,
+      });
+      console.log(`[Bot] 🎥 Live Screencast active (1280x720 JPEG) → http://127.0.0.1:${RELAY_PORT}/video`);
+      broadcastToClients({ type: 'video_status', active: true, videoUrl: `http://127.0.0.1:${RELAY_PORT}/video` });
+    } catch (scErr) {
+      console.warn('[Bot] Screencast start notice:', scErr.message);
     }
   });
 
@@ -1028,7 +1092,7 @@ async function main() {
   }
 
   let lastAudioApiTime = 0;
-  const MIN_AUDIO_API_INTERVAL_MS = 4200; // Rate limit throttle (safely under 15 RPM free ceiling)
+  const MIN_AUDIO_API_INTERVAL_MS = 100; // Paid tier (1,000+ RPM) — instantaneous processing with minimal jitter buffer
 
   function dispatchNextAudioWorker() {
     if (audioQueue.length === 0 || activeWorkers >= MAX_CONCURRENT_WORKERS) return;
@@ -1096,6 +1160,30 @@ async function main() {
       pending.delete(msg.id);
     }
 
+    // ---- SCREENCAST FRAME (Live Meeting Video Feed - Approach A) ----
+    if (msg.method === 'Page.screencastFrame') {
+      const { data, sessionId } = msg.params || {};
+      if (sessionId !== undefined) {
+        cdpSend('Page.screencastFrameAck', { sessionId }).catch(() => {});
+      }
+      if (data) {
+        latestFrameBuffer = Buffer.from(data, 'base64');
+        if (mjpegClients.size > 0) {
+          const header = `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latestFrameBuffer.length}\r\n\r\n`;
+          for (const clientRes of mjpegClients) {
+            try {
+              clientRes.write(header);
+              clientRes.write(latestFrameBuffer);
+              clientRes.write('\r\n');
+            } catch {
+              mjpegClients.delete(clientRes);
+            }
+          }
+        }
+      }
+      return;
+    }
+
     // ---- AUDIO CHUNK received from browser ----
     if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === 'vacfaAudioChunk') {
       const b64 = msg.params.payload;
@@ -1157,8 +1245,9 @@ async function main() {
   console.log('  3. RTCPeerConnection interceptor captures ALL participants\' audio.');
   console.log('  4. Audio chunks (3.5s) are transcribed + translated by Gemini.');
   console.log('  5. Results broadcast to VACFA web app via WebSocket/SSE.');
+  console.log(`  6. Live meeting video stream (MJPEG) served on http://127.0.0.1:${RELAY_PORT}/video`);
   console.log('');
-  console.log(`  Relay : ws://127.0.0.1:${RELAY_PORT}`);
+  console.log(`  Relay : ws://127.0.0.1:${RELAY_PORT}  |  Video: http://127.0.0.1:${RELAY_PORT}/video`);
   console.log(`  Session: ${SESSION_URL}`);
   console.log(`  Press Ctrl+C to stop.`);
   console.log('='.repeat(77) + '\n');

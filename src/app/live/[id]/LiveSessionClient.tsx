@@ -107,7 +107,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
   // Approach A: Live Meeting Video Stage (Screencast & MJPEG Relay)
   const [videoFeedActive, setVideoFeedActive] = useState(false);
-  const [showVideoStage, setShowVideoStage] = useState(true);
+  const [showVideoStage, setShowVideoStage] = useState(false);
   const [videoFeedUrl, setVideoFeedUrl] = useState<string>('http://127.0.0.1:9876/video');
   const [isVideoLoading, setIsVideoLoading] = useState(true);
   const [showCinemaSubtitles, setShowCinemaSubtitles] = useState(true);
@@ -997,19 +997,35 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   </div>
                 )}
 
-                {/* Cinema Overlay Subtitles directly on the video */}
-                {showCinemaSubtitles && captions.length > 0 && (
+                {/* Cinema Overlay Subtitles directly on the video (always active in fullscreen or when toggled on) */}
+                {(showCinemaSubtitles || isFullscreen) && (captions.length > 0 || partialText) && (
                   <div className={styles.videoCinemaSubtitles}>
-                    {(() => {
-                      const latest = captions[captions.length - 1];
-                      const txt = latest.translations?.[captionLang] || latest.originalText;
-                      return (
-                        <>
-                          <div className={styles.videoCinemaSpeaker}>{latest.speaker}</div>
-                          <div className={styles.videoCinemaText}>{txt}</div>
-                        </>
-                      );
-                    })()}
+                    {partialText ? (
+                      <>
+                        <div className={styles.videoCinemaSpeaker}>
+                          <Mic size={13} className="inline mr-1" />
+                          {currentSpeaker || 'Speaking Live...'}
+                        </div>
+                        <div className={styles.videoCinemaText}>
+                          {partialText}
+                          <span className="animate-pulse">_</span>
+                        </div>
+                      </>
+                    ) : (
+                      (() => {
+                        const latest = captions[captions.length - 1];
+                        if (!latest) return null;
+                        const txt = latest.translations?.[captionLang] || latest.originalText;
+                        return (
+                          <>
+                            <div className={styles.videoCinemaSpeaker}>
+                              {latest.speaker} ({captionLang.toUpperCase()})
+                            </div>
+                            <div className={styles.videoCinemaText}>{txt}</div>
+                          </>
+                        );
+                      })()
+                    )}
                   </div>
                 )}
               </div>

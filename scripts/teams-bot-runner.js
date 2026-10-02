@@ -1001,6 +1001,11 @@ async function main() {
     '--use-fake-ui-for-media-stream',
     '--autoplay-policy=no-user-gesture-required',
     '--window-size=1920,1080',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling',
+    '--run-all-compositor-stages-before-draw',
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
     '--remote-allow-origins=*',
@@ -1082,6 +1087,13 @@ async function main() {
     // 1. Enable CDP domains
     await cdpSend('Page.enable');
     await cdpSend('Runtime.enable');
+
+    // 1b. Prevent Chrome from throttling timers/screencast when the bot tab is in background
+    try {
+      await cdpSend('Emulation.setFocusEmulationEnabled', { enabled: true });
+      await cdpSend('Page.setWebLifecycleState', { state: 'active' });
+      console.log('[Bot] ✅ Background execution locked — continuous screencast active without tab-switching');
+    } catch {}
 
     // 2. Bypass Content Security Policy (fixes WASM calling workers & Trusted Types)
     await cdpSend('Page.setBypassCSP', { enabled: true });

@@ -60,11 +60,13 @@ export interface Session {
   meetingIntegration?: MeetingIntegration;
 }
 
+export type GlossaryCategory = 'immunology' | 'epidemiology' | 'logistics' | 'policy' | 'personnel';
+
 // Glossary term
 export interface GlossaryTerm {
   id: string;
   term: string;
-  category: 'immunology' | 'epidemiology' | 'logistics' | 'policy';
+  category: GlossaryCategory;
   translations: Record<string, string>; // language code -> translation
   phonetic?: string;
   context?: string;

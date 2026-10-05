@@ -131,7 +131,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   // Glossary suggestion modal state
   const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
   const [glossaryTerm, setGlossaryTerm] = useState('');
-  const [glossaryCategory, setGlossaryCategory] = useState<'immunology' | 'epidemiology' | 'logistics' | 'policy'>('epidemiology');
+  const [glossaryCategory, setGlossaryCategory] = useState<'immunology' | 'epidemiology' | 'logistics' | 'policy' | 'personnel'>('epidemiology');
   const [glossaryContext, setGlossaryContext] = useState('');
   const [glossarySubmitted, setGlossarySubmitted] = useState(false);
 
@@ -1309,6 +1309,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
               <option value="immunology">Immunology</option>
               <option value="logistics">Logistics</option>
               <option value="policy">Policy</option>
+              <option value="personnel">Faculty & Team</option>
             </select>
           </div>
 

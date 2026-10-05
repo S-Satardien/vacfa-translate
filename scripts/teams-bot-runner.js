@@ -212,6 +212,39 @@ Accurately recognize African personal and family names without Anglicizing them:
 - West Africa: Chukwuemeka, Ngozi, Babatunde, Olumide, Adebayo, Chioma, Ifeanyi, Chidiemma, Femi, Funmilayo, Folake, Kwame, Kofi, Ama, Akosua, Yaw, Mensah, Boateng, Osei, Diallo, Sow, Traoré, Coulibaly, Koné, Diop, Ndiaye, Cissé, Ba, Fall, Touré.
 - Central & Lusophone Africa: Mukendi, Ilunga, Kalonji, Kasongo, Tshisekedi, Mbemba, Ngando, Eyenga, Eto'o, Aboubakar, Mateus, João, Sebastião, Manuel, Esperança, Graça, Afonso, Domingos, Chissano, Mondlane, Nhaca, Macamo.
 
+VACFA & NISH TEAM MEMBERS, FACULTY & CLINICAL PERSONNEL (CANONICAL SPELLING & IDENTITIES):
+Always transcribe and preserve the exact spelling of these team members and meeting participants:
+- Xolie Ndlela (Administrative Officer)
+- Edina Amponsah-Dacosta (Senior Research Officer)
+- Saleem Satardien (Online Learning Environment Developer)
+- Alana Keyser (Project Manager)
+- Hilary Basson (Research Nurse)
+- Benjamin Kagina (Chief Research Officer)
+- Gladstone Madito (Lecturer)
+- Liza Rossi (Research Officer, Timber Study)
+- Martie Abraham (Team Member)
+- Gregory Hussey (Senior Scholar)
+- Petronella Ncube (Project Manager)
+- Imen Ayouni Ep Labidi (Team Member)
+- Ramonde Patientia (Senior Research Officer)
+- Adelaide Masu (Senior Lecturer)
+- Christine Ritchie (Project Manager, Timber Study)
+- Dilshaad Brey (Senior Librarian)
+- Nolitha (Research Assistant)
+- Anthony Hawkridge (Senior Research Officer)
+- Bronte Davies (Junior Research Officer)
+- Marthe Penka (Team Member)
+- Elloise Du Toit (Senior Research Officer)
+- Elizabeth Oduwole (Research Officer)
+- Tshepiso Mbangiwa (Team Member)
+- Lubayna Khan (Research Assistant)
+- Rudzani Muloiwa (Professor & Head of Department)
+- Timber Study / #TimberStudy (Clinical trial / research protocol)
+
+TRANSLATION INTEGRITY RULE FOR PROPER NAMES:
+- In translated subtitles and speech (French, Portuguese, Swahili), PROPER PERSONAL NAMES MUST REMAIN COMPLETELY UNCHANGED.
+- NEVER translate proper names or surnames into dictionary words (e.g., NEVER translate "Patientia" into French "Patience", NEVER translate "Gladstone" or "Davies").
+
 AFRICAN LINGUISTIC ZONES & ACCENT SENSITIVITY:
 1. Anglophone Africa (South Africa en-ZA, Nigeria en-NG, Kenya en-KE, Ghana en-GH):
    - South African English phonology (centralized kit/pin vowels, non-rhotic cadence, glottal stops, unstressed diphthongs).

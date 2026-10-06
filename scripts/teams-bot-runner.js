@@ -214,7 +214,7 @@ Accurately recognize African personal and family names without Anglicizing them:
 
 VACFA & NISH TEAM MEMBERS, FACULTY & CLINICAL PERSONNEL (CANONICAL SPELLING & IDENTITIES):
 Always transcribe and preserve the exact spelling of these team members and meeting participants:
-- Xolie Ndlela (Administrative Officer)
+- Xolie Ndlela (Administrative Officer, pronounced /zoh-lee/ or /koh-lee/ with soft click; often phonetically misheard as "collie", "coley", or "jolly"; ALWAYS transcribe as "Xolie")
 - Edina Amponsah-Dacosta (Senior Research Officer)
 - Saleem Satardien (Online Learning Environment Developer)
 - Alana Keyser (Project Manager)
@@ -243,9 +243,10 @@ Always transcribe and preserve the exact spelling of these team members and meet
 - Richard White (Professor of Infectious Disease Modelling, LSHTM)
 - Timber Study / #TimberStudy (Clinical trial / research protocol)
 
-TRANSLATION INTEGRITY RULE FOR PROPER NAMES:
+TRANSLATION INTEGRITY RULE FOR PROPER NAMES & CONCISENESS:
 - In translated subtitles and speech (French, Portuguese, Swahili), PROPER PERSONAL NAMES MUST REMAIN COMPLETELY UNCHANGED.
 - NEVER translate proper names or surnames into dictionary words (e.g., NEVER translate "Patientia" into French "Patience", NEVER translate "Gladstone", "Davies", or "White").
+- CONCISE SIMULTANEOUS INTERPRETATION: Strip meaningless conversational hesitation markers (e.g. "Um", "Uh", "Er", "Hmm", and false-start stutters) from all translation outputs. Deliver clean, professional, concise translations directly.
 
 VACFA & NISH INSTITUTIONAL, CLINICAL & STUDY VOCABULARY:
 - "NISH" / "NISH 2.0": Spoken as /neesh/. Transcribe as "NISH" (Network for Immunization Specialists), NEVER as "Niche" or "Nietzsche".
@@ -367,9 +368,77 @@ async function transcribeAndTranslateAudio(base64Audio) {
 // ============================================================================
 // 4. Gemini — Text-Only Translation (fallback for caption scraping path)
 // ============================================================================
+// 4. Gemini — Text-Only Translation & Speech Normalization Helpers
+// ============================================================================
+
+/**
+ * Detects whether a string is a non-speech Teams system toast or browser UI notice.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isSystemMessageOrToast(text) {
+  if (!text) return true;
+  const t = text.trim();
+  // Teams UI status announcements, meeting toasts, and browser notifications
+  if (/^zoom is reset/i.test(t)) return true;
+  if (/^zoom (in|out|level)/i.test(t)) return true;
+  if (/^(recording|transcription|live captions) (has |is )?(started|stopped|on|off)/i.test(t)) return true;
+  if (/^you('re| are) muted/i.test(t)) return true;
+  if (/^screen sharing (started|stopped)/i.test(t)) return true;
+  if (/^(camera|microphone) is (turned on|turned off)/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * Normalizes acoustic mishearings, strips disfluencies, and cleans speech before translation & TTS.
+ * @param {string} text
+ * @returns {string}
+ */
+function cleanAndNormalizeSpokenText(text) {
+  if (!text) return '';
+  let cleaned = text.trim();
+
+  // 1. Context & Acoustic Name Normalization (common ASR mishearings)
+  cleaned = cleaned
+    // Xolie Ndlela (often misheard as collie, coley, jolly)
+    .replace(/\b([Cc]ollie|[Cc]oley|[Jj]olly)\b/g, 'Xolie')
+    // NISH / NISH 2.0 (often misheard as niche, nietzsche)
+    .replace(/\b([Nn]iche|[Nn]ietzsche)\b/g, 'NISH')
+    // PICARD Fund (often misheard as p-card, pickard)
+    .replace(/\b([Pp]-?[Cc]ard|[Pp]ickard)\b/g, 'PICARD')
+    // Studies and protocols
+    .replace(/\b([Tt]-?[Tt]ap)\b/g, 'TTAP')
+    .replace(/\b([Tt]-?[Dd]ep)\b/g, 'TDEP')
+    .replace(/\b([Vv]-?[Pp]op)\b/g, 'VPOP')
+    .replace(/\b([Mm]-?[Pp]acks|[Mm]pac[ks])\b/gi, 'MPACS')
+    .replace(/\b([Cc]hepie?)\b/g, 'Chepy')
+    // Education terms in SA context
+    .replace(/\b([Mm]atrix)\b/g, (match, p1, offset, str) => {
+      return /results|tertiary|senior|grade|school|student|pass/i.test(str) ? 'Matric' : match;
+    });
+
+  // 2. Disfluency & Vocal Hesitation Stripping
+  // Leading fillers: "Um, ", "Uh, ", "Uhm, ", "Ah, ", "Er, "
+  cleaned = cleaned.replace(/^(um|uh|uhm|ah|er|hmm)[,\s]+/i, '');
+  // Trailing fillers: ", um", ", uh"
+  cleaned = cleaned.replace(/[,\s]+(um|uh|uhm|ah|er|hmm)$/i, '');
+  // Inline standalone fillers with surrounding punctuation: "..., um, ..." -> "..., ..."
+  cleaned = cleaned.replace(/,\s*(um|uh|uhm|er|hmm)\s*,/gi, ',');
+  cleaned = cleaned.replace(/\s+(um|uh|uhm|er|hmm)\s+/gi, ' ');
+
+  // 3. De-duplicate immediate stuttered word repetitions ("can can you" -> "can you", "we we" -> "we")
+  cleaned = cleaned.replace(/\b([A-Za-z]+)\s+\1\b/gi, '$1');
+
+  // 4. Remove conversational apologetic stutter if trailing ("..., sorry I can't")
+  cleaned = cleaned.replace(/,\s*sorry[,\s]+i can'?t$/i, '');
+
+  return cleaned.trim();
+}
+
 const TEXT_TRANSLATION_PROMPT = `
-You are VACFA Translate. Translate the given text into en, fr, pt, sw.
-Use VACFA medical glossary terms where applicable.
+You are VACFA Translate, an expert simultaneous interpreter. Translate the given text into en, fr, pt, sw.
+Clean away vocal hesitation sounds (e.g. "Um", "Uh", "Er", "Hmm") from all translation outputs.
+Use VACFA medical and institutional glossary terms where applicable.
 Output ONLY valid JSON:
 { "detectedLanguage":"en", "translations":{"en":"...","fr":"...","pt":"...","sw":"..."}, "detectedGlossaryTerms":[] }`;
 
@@ -378,11 +447,10 @@ async function translateText(text, speaker = 'Participant') {
   if (!apiKey) return fallbackTranslate(text);
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-flash-lite-latest',
-    'gemini-flash-lite-latest',
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash-lite',
     'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
+    'gemini-flash-lite-latest',
     'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
@@ -390,7 +458,7 @@ async function translateText(text, speaker = 'Participant') {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const timer = setTimeout(() => ctrl.abort(), 7500);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1305,19 +1373,27 @@ async function main() {
       const elapsed = Date.now() - t0;
 
       if (result && result.transcript && result.transcript.trim()) {
-        const spoken = result.transcript.trim();
-        if (checkAndRecordPhrase(spoken)) {
+        const rawSpoken = result.transcript.trim();
+        const spoken = cleanAndNormalizeSpokenText(rawSpoken);
+        if (spoken && spoken.length > 1 && checkAndRecordPhrase(spoken)) {
           lastSpokenContext = spoken.slice(-150);
           const speaker = result.speaker || 'Meeting Speaker';
+
+          // Clean translations to ensure TTS and subtitles stay concise and filler-free
+          const cleanTranslations = {};
+          for (const [lang, trText] of Object.entries(result.translations || {})) {
+            cleanTranslations[lang] = cleanAndNormalizeSpokenText(trText);
+          }
+
           console.log(`\n🎙️  [${speaker}] (AI: ${elapsed}ms): "${spoken}"`);
-          console.log(`🌍  FR: "${result.translations?.fr}" | PT: "${result.translations?.pt}" | SW: "${result.translations?.sw}"`);
+          console.log(`🌍  FR: "${cleanTranslations.fr || ''}" | PT: "${cleanTranslations.pt || ''}" | SW: "${cleanTranslations.sw || ''}"`);
 
           const entry = {
             id: `bot-audio-${Date.now()}`,
             speaker: `${speaker} (${(result.detectedLanguage || 'en').toUpperCase()})`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             originalText: spoken,
-            translations: result.translations || {},
+            translations: cleanTranslations,
             glossaryTerms: result.detectedGlossaryTerms || [],
           };
 
@@ -1325,7 +1401,7 @@ async function main() {
 
           if (CART_URL) {
             const cartLang = process.env.CART_LANGUAGE || 'fr';
-            const cartText = result.translations?.[cartLang] || spoken;
+            const cartText = cleanTranslations[cartLang] || spoken;
             sendCartCaption(CART_URL, cartText, speaker).catch(() => {});
           }
         }
@@ -1389,14 +1465,20 @@ async function main() {
         const { speaker, text } = data;
         if (!text || text.length < 3) return;
 
-        if (checkAndRecordPhrase(text)) {
-          console.log(`\n📝 [Live Captions Fast-Path] ${speaker}: "${text}"`);
-          translateText(text, speaker).then((tr) => {
+        // Discard non-speech UI system notifications ("Zoom is reset to 100%", etc.)
+        if (isSystemMessageOrToast(text)) return;
+
+        const cleanedText = cleanAndNormalizeSpokenText(text);
+        if (!cleanedText || cleanedText.length < 2) return;
+
+        if (checkAndRecordPhrase(cleanedText)) {
+          console.log(`\n📝 [Live Captions Fast-Path] ${speaker}: "${cleanedText}"`);
+          translateText(cleanedText, speaker).then((tr) => {
             const entry = {
               id: `bot-cap-${Date.now()}`,
               speaker: `${speaker} (${tr.sourceLang.toUpperCase()})`,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-              originalText: text,
+              originalText: cleanedText,
               translations: tr.translations,
               glossaryTerms: tr.glossaryTerms,
             };
@@ -1405,7 +1487,7 @@ async function main() {
 
             if (CART_URL) {
               const cartLang = process.env.CART_LANGUAGE || 'fr';
-              sendCartCaption(CART_URL, tr.translations[cartLang] || text, speaker).catch(() => {});
+              sendCartCaption(CART_URL, tr.translations[cartLang] || cleanedText, speaker).catch(() => {});
             }
           }).catch(() => {});
         }

@@ -44,12 +44,16 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 }
 
 /**
- * Strips bracket indicators, glossary markers, and HTML tags from text for clean TTS pronunciation.
+ * Strips bracket indicators, glossary markers, vocal fillers, and HTML tags from text for clean TTS pronunciation.
  */
 function cleanTextForSpeech(text: string): string {
   return text
     .replace(/<[^>]*>/g, '') // remove HTML tags
     .replace(/\[(FR|PT|SW|EN)\]/gi, '') // remove prefix indicators
+    .replace(/^(um|uh|uhm|ah|er|hmm)[,\s]+/i, '') // strip leading hesitation
+    .replace(/[,\s]+(um|uh|uhm|ah|er|hmm)$/i, '') // strip trailing hesitation
+    .replace(/,\s*(um|uh|uhm|er|hmm)\s*,/gi, ',') // strip inline hesitation
+    .replace(/\b([A-Za-z]+)\s+\1\b/gi, '$1') // de-duplicate stuttered words
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -383,9 +387,9 @@ function fallbackSpeechSynthesis(
       en: 'en-ZA',
     };
     utterance.lang = langMap[langCode] || langCode;
-    // For Swahili speech cadence: keep pace natural, musical, and unhurried (0.92 - 0.94)
+    // For Swahili speech cadence: musical baseline (0.95), scales up to 1.22 when catching up on backlog
     if (langCode === 'sw') {
-      utterance.rate = Math.min(rate, 0.94);
+      utterance.rate = Math.min(rate, 1.22);
     } else {
       utterance.rate = rate;
     }
@@ -416,9 +420,9 @@ function fallbackSpeechSynthesis(
 }
 
 /**
- * Continuous FIFO Queue Worker:
+ * Continuous Zero-Drop FIFO Queue Worker:
  * Processes queued sentences sequentially without dropping or interrupting earlier statements.
- * Dynamically adjusts cadence rate to catch up if a fast speaker generates a backlog.
+ * Dynamically scales playback rate (1.0x -> 1.35x) to catch up smoothly when a fast speaker generates a backlog.
  */
 async function processAudioQueue(): Promise<void> {
   if (isProcessingQueue) return;
@@ -431,15 +435,16 @@ async function processAudioQueue(): Promise<void> {
     const item = audioQueue.shift();
     if (!item) break;
 
-    // Adaptive cadence calculation:
-    // If the speaker spoke fast and there are pending sentences waiting,
-    // increase the rate slightly (from 0.95 up to 1.18) so the listener catches up smoothly.
+    // Adaptive cadence calculation (Zero-drop catch-up):
+    // Preserves 100% of technical and medical sentences while speeding up playback when queued
     const backlog = audioQueue.length;
-    let rate = 0.95;
+    let rate = 1.0;
     if (backlog === 1) {
-      rate = 1.08;
-    } else if (backlog >= 2) {
-      rate = 1.18;
+      rate = 1.14; // brisk interpretation pace
+    } else if (backlog === 2) {
+      rate = 1.25; // accelerated catch-up pace
+    } else if (backlog >= 3) {
+      rate = 1.35; // maximum clean neural catch-up pace
     }
 
     await playAudioChunk(item.text, item.langCode, rate, thisGen);

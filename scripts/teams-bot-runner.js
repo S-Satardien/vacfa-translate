@@ -300,8 +300,10 @@ async function transcribeAndTranslateAudio(base64Audio) {
   const apiKey = apiKeys[audioCallCount % apiKeys.length];
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash',
+    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash-lite',
+    'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
+    'gemini-flash-lite-latest',
     'gemini-flash-latest',
   ].filter((m, i, a) => m && a.indexOf(m) === i);
 
@@ -309,7 +311,7 @@ async function transcribeAndTranslateAudio(base64Audio) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const timer = setTimeout(() => ctrl.abort(), 6500);
 
       const promptText = 'Transcribe ONLY the audibly spoken human speech in this audio chunk. If silence or noise, reply {"noSpeech":true}. NEVER hallucinate or invent sentences.';
 
@@ -613,8 +615,8 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
             consecutiveSilence++;
           }
           const elapsed=Date.now()-startTime;
-          // Natural sentence boundary: real speech occurred, >= 3.2s elapsed, and speaker paused for ~1s
-          if(hasAcousticSpeech && elapsed>=3200 && consecutiveSilence>=3){
+          // Natural sentence boundary: real speech occurred, >= 2.2s elapsed, and speaker paused for ~500ms (2 ticks of 250ms)
+          if(hasAcousticSpeech && elapsed>=2200 && consecutiveSilence>=2){
             stopActiveRecorder();
           }
         }
@@ -629,13 +631,13 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
         const chunks=sliceChunks;
         const hadVoice=hasAcousticSpeech;
         hasAcousticSpeech=false;
-        setTimeout(recordLoop,40);
+        setTimeout(recordLoop,30);
 
         // ONLY emit to Gemini if REAL acoustic speech was detected in this slice!
         if(chunks.length>0 && hadVoice){
           try{
             const blob=new Blob(chunks,{type:'audio/webm'});
-            if(blob.size > 5500){
+            if(blob.size > 4000){
               const buf=await blob.arrayBuffer();
               const bytes=new Uint8Array(buf);
               let binary='';
@@ -661,16 +663,16 @@ const AUDIO_INTERCEPTOR_SCRIPT = `
           safetyTimer=null;
         }
         isLoopRunning=false;
-        setTimeout(recordLoop,1000);
+        setTimeout(recordLoop,800);
       };
 
-      // Poll in 350ms intervals
-      sliceRecorder.start(350);
+      // Poll in 250ms intervals for rapid acoustic responsiveness
+      sliceRecorder.start(250);
 
-      // Max safety ceiling for uninterrupted talking: 7.5 seconds
+      // Max safety ceiling for uninterrupted talking: 4.5 seconds (prevents huge audio slices)
       safetyTimer=setTimeout(()=>{
         stopActiveRecorder();
-      },7500);
+      },4500);
     }
 
     track.addEventListener('ended',()=>{
@@ -1271,74 +1273,71 @@ async function main() {
     return true;
   }
 
-  // Sequential Audio Processing Queue — strictly chronological, zero out-of-order subtitles
+  // Multi-Worker Audio Processing Queue — high throughput, ultra-low latency
   const audioQueue = [];
   let activeWorkers = 0;
-  const MAX_CONCURRENT_WORKERS = 1;
+  const MAX_CONCURRENT_WORKERS = 3;
 
   function enqueueAudioChunk(b64) {
-    if (audioQueue.length > 10) audioQueue.shift();
+    // If the queue has more than 2 pending chunks (due to a transient network lag),
+    // drop the oldest stale chunk to ensure subtitles remain locked to the live speaker in real time!
+    while (audioQueue.length > 2) {
+      console.log('[Bot] ⚡ Dropping stale audio chunk to maintain real-time speaker synchrony');
+      audioQueue.shift();
+    }
     audioQueue.push(b64);
-    dispatchNextAudioWorker();
+    dispatchWorkers();
   }
 
-  let lastAudioApiTime = 0;
-  const MIN_AUDIO_API_INTERVAL_MS = 100; // Paid tier (1,000+ RPM) — instantaneous processing with minimal jitter buffer
+  function dispatchWorkers() {
+    while (audioQueue.length > 0 && activeWorkers < MAX_CONCURRENT_WORKERS) {
+      activeWorkers++;
+      const b64 = audioQueue.shift();
+      processSingleAudioChunk(b64);
+    }
+  }
 
-  function dispatchNextAudioWorker() {
-    if (audioQueue.length === 0 || activeWorkers >= MAX_CONCURRENT_WORKERS) return;
-    activeWorkers++;
-    const b64 = audioQueue.shift();
+  async function processSingleAudioChunk(b64) {
+    try {
+      const sizeKB = Math.round(b64.length * 0.75 / 1024);
+      const t0 = Date.now();
+      const result = await transcribeAndTranslateAudio(b64);
+      const elapsed = Date.now() - t0;
 
-    (async () => {
-      try {
-        const now = Date.now();
-        const elapsedSinceLast = now - lastAudioApiTime;
-        if (elapsedSinceLast < MIN_AUDIO_API_INTERVAL_MS) {
-          await new Promise((r) => setTimeout(r, MIN_AUDIO_API_INTERVAL_MS - elapsedSinceLast));
-        }
-        lastAudioApiTime = Date.now();
+      if (result && result.transcript && result.transcript.trim()) {
+        const spoken = result.transcript.trim();
+        if (checkAndRecordPhrase(spoken)) {
+          lastSpokenContext = spoken.slice(-150);
+          const speaker = result.speaker || 'Meeting Speaker';
+          console.log(`\n🎙️  [${speaker}] (AI: ${elapsed}ms): "${spoken}"`);
+          console.log(`🌍  FR: "${result.translations?.fr}" | PT: "${result.translations?.pt}" | SW: "${result.translations?.sw}"`);
 
-        const sizeKB = Math.round(b64.length * 0.75 / 1024);
-        const t0 = Date.now();
-        const result = await transcribeAndTranslateAudio(b64);
-        const elapsed = Date.now() - t0;
+          const entry = {
+            id: `bot-audio-${Date.now()}`,
+            speaker: `${speaker} (${(result.detectedLanguage || 'en').toUpperCase()})`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            originalText: spoken,
+            translations: result.translations || {},
+            glossaryTerms: result.detectedGlossaryTerms || [],
+          };
 
-        if (result && result.transcript && result.transcript.trim()) {
-          const spoken = result.transcript.trim();
-          if (checkAndRecordPhrase(spoken)) {
-            lastSpokenContext = spoken.slice(-150);
-            const speaker = result.speaker || 'Meeting Speaker';
-            console.log(`\n🎙️  [${speaker}] (AI: ${elapsed}ms): "${spoken}"`);
-            console.log(`🌍  FR: "${result.translations?.fr}" | PT: "${result.translations?.pt}" | SW: "${result.translations?.sw}"`);
+          broadcastToClients({ type: 'caption', caption: entry });
 
-            const entry = {
-              id: `bot-audio-${Date.now()}`,
-              speaker: `${speaker} (${(result.detectedLanguage || 'en').toUpperCase()})`,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-              originalText: spoken,
-              translations: result.translations || {},
-              glossaryTerms: result.detectedGlossaryTerms || [],
-            };
-
-            broadcastToClients({ type: 'caption', caption: entry });
-
-            if (CART_URL) {
-              const cartLang = process.env.CART_LANGUAGE || 'fr';
-              const cartText = result.translations?.[cartLang] || spoken;
-              sendCartCaption(CART_URL, cartText, speaker).catch(() => {});
-            }
+          if (CART_URL) {
+            const cartLang = process.env.CART_LANGUAGE || 'fr';
+            const cartText = result.translations?.[cartLang] || spoken;
+            sendCartCaption(CART_URL, cartText, speaker).catch(() => {});
           }
         }
-      } catch (err) {
-        console.error('[Bot] Worker error:', err.message);
-      } finally {
-        activeWorkers--;
-        if (audioQueue.length > 0) {
-          setImmediate(dispatchNextAudioWorker);
-        }
       }
-    })();
+    } catch (err) {
+      console.error('[Bot] Worker error:', err.message);
+    } finally {
+      activeWorkers--;
+      if (audioQueue.length > 0) {
+        setImmediate(dispatchWorkers);
+      }
+    }
   }
 
   // ---- Handle CDP messages ----

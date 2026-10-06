@@ -219,31 +219,50 @@ Always transcribe and preserve the exact spelling of these team members and meet
 - Saleem Satardien (Online Learning Environment Developer)
 - Alana Keyser (Project Manager)
 - Hilary Basson (Research Nurse)
-- Benjamin Kagina (Chief Research Officer)
+- Benjamin Kagina / Ben (Chief Research Officer)
 - Gladstone Madito (Lecturer)
 - Liza Rossi (Research Officer, Timber Study)
 - Martie Abraham (Team Member)
-- Gregory Hussey (Senior Scholar)
-- Petronella Ncube (Project Manager)
+- Gregory Hussey / Greg (Senior Scholar & Emeritus Professor)
+- Petronella Ncube / Polly (Project Manager, NISH & VPOP)
 - Imen Ayouni Ep Labidi (Team Member)
 - Ramonde Patientia (Senior Research Officer)
 - Adelaide Masu (Senior Lecturer)
 - Christine Ritchie (Project Manager, Timber Study)
 - Dilshaad Brey (Senior Librarian)
-- Nolitha (Research Assistant)
-- Anthony Hawkridge (Senior Research Officer)
+- Nolitha / Nolu (Research Assistant)
+- Anthony Hawkridge / Tony (Senior Research Officer)
 - Bronte Davies (Junior Research Officer)
 - Marthe Penka (Team Member)
 - Elloise Du Toit (Senior Research Officer)
 - Elizabeth Oduwole (Research Officer)
-- Tshepiso Mbangiwa (Team Member)
+- Tshepiso Mbangiwa / Chepy (Team Member & Researcher)
 - Lubayna Khan (Research Assistant)
 - Rudzani Muloiwa (Professor & Head of Department)
+- Funke Alaba (Health Economist & Senior Collaborator, UCT)
+- Richard White (Professor of Infectious Disease Modelling, LSHTM)
 - Timber Study / #TimberStudy (Clinical trial / research protocol)
 
 TRANSLATION INTEGRITY RULE FOR PROPER NAMES:
 - In translated subtitles and speech (French, Portuguese, Swahili), PROPER PERSONAL NAMES MUST REMAIN COMPLETELY UNCHANGED.
-- NEVER translate proper names or surnames into dictionary words (e.g., NEVER translate "Patientia" into French "Patience", NEVER translate "Gladstone" or "Davies").
+- NEVER translate proper names or surnames into dictionary words (e.g., NEVER translate "Patientia" into French "Patience", NEVER translate "Gladstone", "Davies", or "White").
+
+VACFA & NISH INSTITUTIONAL, CLINICAL & STUDY VOCABULARY:
+- "NISH" / "NISH 2.0": Spoken as /neesh/. Transcribe as "NISH" (Network for Immunization Specialists), NEVER as "Niche" or "Nietzsche".
+- "PICARD" / "PICARD Fund": Spoken as /pih-kard/ or /py-kard/. UCT VACFA internal funding account mechanism.
+- "AVC": Spoken as /ay-vee-see/. African Vaccinology Course (annual pan-African training).
+- "TDEP Study": Spoken as /tee-dep/. Tdap / pertussis clinical trial protocol approved by Sanofi Scientific Committee.
+- "TTAP Study": Spoken as /tee-tap/. Vaccine serology and antibody study protocol.
+- "VPOP": Spoken as /vee-pop/. Vaccine Policy / Prioritization and Optimization Platform workshop (Gates & WHO).
+- "NMAT": Spoken as /en-mat/. NITAG Maturity Assessment Tool (Africa CDC & WHO framework).
+- "HREC" / "HRAC": Spoken as /aych-rek/ or /aych-rak/. UCT Health Research Ethics Committee.
+- "SPHFM": School of Public Health and Family Medicine (UCT).
+- "MEL": Monitoring, Evaluation, and Learning framework & Theory of Change.
+- "MPACS": Mpox Preparedness and Case Study for NITAG training.
+- "PCV10" / "PCV13": Pneumococcal Conjugate Vaccine formulations (e.g. Mali NITAG switch).
+- "RSV": Respiratory Syncytial Virus maternal vaccine / monoclonal antibody programs.
+- Partners: Wellcome Trust, Gates Foundation, Task Force for Global Health, Sanofi Scientific Committee.
+- Employment Equity (EE): UCT transformation and disability self-declaration targets.
 
 AFRICAN LINGUISTIC ZONES & ACCENT SENSITIVITY:
 1. Anglophone Africa (South Africa en-ZA, Nigeria en-NG, Kenya en-KE, Ghana en-GH):

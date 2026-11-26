@@ -143,10 +143,51 @@
 
 .captionBox {
   background-color: var(--surface-glass, rgba(26,26,26,0.7));
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
   border-radius: 12px;
   padding: 20px;
   border: 1px solid var(--grey-700, #424242);
+  transition: border-color 0.35s ease, box-shadow 0.35s ease, background-color 0.35s ease;
+}
+
+.captionBoxDraft {
+  background-color: rgba(34, 24, 28, 0.72);
+  border-color: rgba(232, 72, 94, 0.52);
+  box-shadow: 0 0 0 1px rgba(232, 72, 94, 0.18), 0 8px 24px rgba(196, 30, 58, 0.14);
+}
+
+.captionBoxRefined {
+  border-color: rgba(76, 175, 80, 0.42);
+}
+
+.liveDraftPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(232, 72, 94, 0.18);
+  color: var(--vacfa-red-light, #E8485E);
+  border: 1px solid rgba(232, 72, 94, 0.35);
+}
+
+.refinedPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: rgba(76, 175, 80, 0.14);
+  color: #81C784;
+  border: 1px solid rgba(76, 175, 80, 0.3);
 }
 
 .captionHeader {

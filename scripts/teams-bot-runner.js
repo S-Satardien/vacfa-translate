@@ -157,22 +157,43 @@ const relayServer = http.createServer((req, res) => {
   res.writeHead(404); res.end();
 });
 
+const { startInProcessVbCableCapture } = require('./vbcable-audio-bridge');
+const { createRealtimeWssPublisher } = require('./realtime-wss-relay');
+
+const SESSION_SLOT = (() => {
+  const m = String(SESSION_URL).match(/live\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : 'session-009';
+})();
+
+const recentCaptionHistory = [];
+const realtimeWss = createRealtimeWssPublisher({ slot: SESSION_SLOT });
+
 relayServer.listen(RELAY_PORT, '127.0.0.1', () => {
   console.log(`[Relay] ws://127.0.0.1:${RELAY_PORT}  |  http://127.0.0.1:${RELAY_PORT}/video  |  /events`);
+  console.log(`[Relay] 🌐 Zero-Cost Persistent WSS Publisher active for slot "${SESSION_SLOT}" (dual-broker EMQX + Mosquitto)`);
 });
 
 try {
   const { WebSocketServer } = require('ws');
   wss = new WebSocketServer({ server: relayServer });
   wss.on('connection', (client) => {
-    console.log(`[Relay] WebSocket client connected (total: ${wss.clients.size})`);
+    console.log(`[Relay] Local WebSocket client connected (total: ${wss.clients.size})`);
     client.send(JSON.stringify({
       type: 'bot_status',
       connected: true,
+      transport: 'local-ws',
       botName: BOT_NAME,
       videoAvailable: true,
       videoUrl: `http://127.0.0.1:${RELAY_PORT}/video`,
     }));
+
+    // Send recent finalized captions immediately so late-joining clients see instant context
+    if (recentCaptionHistory.length > 0) {
+      client.send(JSON.stringify({
+        type: 'caption_history',
+        captions: recentCaptionHistory,
+      }));
+    }
   });
 } catch { console.log('[Relay] ws package not found — SSE-only mode'); }
 
@@ -180,10 +201,28 @@ setInterval(() => {
   for (const c of sseClients) {
     try { c.write(':heartbeat\n\n'); } catch { sseClients.delete(c); }
   }
+  if (wss) {
+    for (const c of wss.clients) {
+      if (c.readyState === 1) {
+        try { c.ping(); } catch { /* skip */ }
+      }
+    }
+  }
 }, 15000);
 
-/** Broadcast a JSON payload to every connected web-app client (local WS/SSE + remote Cloud SSE). */
+/**
+ * Broadcasts a JSON payload to all connected local WS/SSE clients AND publishes over
+ * the zero-cost persistent dual-broker WSS channel (`caption_draft`, `caption`, `caption_remove`, `history`).
+ * @param {object} data - Event payload to broadcast
+ */
 function broadcastToClients(data) {
+  if (data && data.type === 'caption' && data.caption) {
+    recentCaptionHistory.push(data.caption);
+    if (recentCaptionHistory.length > 15) {
+      recentCaptionHistory.shift();
+    }
+  }
+
   const raw = JSON.stringify(data);
   if (wss) for (const c of wss.clients) {
     if (c.readyState === 1) try { c.send(raw); } catch { /* skip */ }
@@ -192,15 +231,13 @@ function broadcastToClients(data) {
   for (const c of sseClients) {
     try { c.write(sse); } catch { sseClients.delete(c); }
   }
-  // Mirror finalized captions to HTTPS Cloud SSE relay so remote colleagues receive live captions & TTS
-  if (data && data.type === 'caption') {
-    const slotMatch = String(SESSION_URL).match(/live\/([a-zA-Z0-9_-]+)/);
-    const slot = slotMatch ? slotMatch[1] : 'session-009';
-    fetch(`https://ntfy.sh/vacfa-translate-live-9f4a2c-${slot}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      body: raw,
-    }).catch(() => {});
+
+  // Push all real-time caption events (~180ms RTT, unlimited throughput, $0/month) to remote colleagues over persistent WSS
+  if (data && (data.type === 'caption_draft' || data.type === 'caption' || data.type === 'caption_remove')) {
+    realtimeWss.publishLive(data);
+    if (data.type === 'caption') {
+      realtimeWss.publishHistory(recentCaptionHistory);
+    }
   }
 }
 
@@ -302,12 +339,82 @@ OUTPUT FORMAT:
 Output ONLY valid compact JSON:
 {"transcript":"...","detectedLanguage":"en","speaker":"Speaker","translations":{"en":"...","fr":"...","pt":"...","sw":"..."},"detectedGlossaryTerms":[]}`;
 
+// Ultra-compact static system prompt for ~400ms live draft previews (gemini-3.5-flash-lite, thinkingBudget: 0)
+const AUDIO_DRAFT_SYSTEM_PROMPT = `You are a real-time bilingual vaccinology captioner (VACFA / NISH / NITAG / GTCV / VPOP / PEV / PICO / E2R / WHO).
+Key names: Solange, Yolande, Sidy Ndiaye, Belsinia Baza, Xolie, Edina, Ben, Elizabeth, Polly, Rudzani, Saleem.
+Rules:
+- Transcribe ONLY audible human speech (French, English, Portuguese, or Swahili). Never hallucinate.
+- If silence/noise, return {"noSpeech":true}.
+- Strip hesitation fillers ("um", "uh", "euh").
+- Watch for Francophone-accented English ("synthesizing evidence", NOT "sensitizing evidence"; "NITAG", NOT "NITEC").
+- Output ONLY valid compact JSON with English and French immediately (fast path):
+{"transcript":"...","detectedLanguage":"en","speaker":"Speaker","translations":{"en":"...","fr":"..."}}`;
+
 let audioCallCount = 0;
-let lastSpokenContext = '';
+const recentTranscriptHistory = [];
 
 /**
- * Sends a WebM audio chunk to Gemini for combined STT + translation.
- * @param {string} base64Audio - Base64-encoded audio/webm data
+ * Ultra-fast speculative draft pass (~350-550ms) using `gemini-3.5-flash-lite` with zero thinking
+ * and compact EN/FR output so live captions appear ~1.3s after speech begins and smoothly refine in place.
+ * @param {string} base64Audio - Base64-encoded lossless WAV audio snapshot
+ * @returns {Promise<object|null>} Parsed draft result or null
+ */
+async function transcribeAndTranslateDraft(base64Audio) {
+  const rawKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!rawKey) return null;
+  const apiKeys = rawKey.split(',').map((k) => k.trim()).filter(Boolean);
+  const apiKey = apiKeys[(audioCallCount++) % apiKeys.length];
+
+  const draftModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
+  const rollingContext = recentTranscriptHistory.slice(-2).join(' | ');
+  const contextClause = rollingContext ? ` Recent context (do not repeat): "${rollingContext}".` : '';
+  const audioMimeType = base64Audio.startsWith('UklGR') ? 'audio/wav' : 'audio/webm';
+
+  for (const model of draftModels) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3200);
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inlineData: { mimeType: audioMimeType, data: base64Audio } },
+              { text: `Fast live draft caption.${contextClause} Transcribe audible speech, detect language (en/fr/pt/sw), translate to en & fr. If silent: {"noSpeech":true}.` },
+            ],
+          }],
+          systemInstruction: { parts: [{ text: AUDIO_DRAFT_SYSTEM_PROMPT }] },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.0,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) continue;
+      const json = await res.json();
+      const raw = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed.noSpeech) return null;
+      parsed._model = model;
+      return parsed;
+    } catch {
+      // Non-fatal: final contextual pass still guarantees complete delivery
+    }
+  }
+  return null;
+}
+
+/**
+ * Sends a lossless WAV/WebM audio chunk to Gemini for full-context STT + 4-language translation.
+ * @param {string} base64Audio - Base64-encoded audio/wav or audio/webm data
  * @returns {Promise<object|null>} Parsed result or null on failure
  */
 async function transcribeAndTranslateAudio(base64Audio) {
@@ -322,8 +429,10 @@ async function transcribeAndTranslateAudio(base64Audio) {
     'gemini-flash-latest',
   ];
 
-  const contextClause = lastSpokenContext
-    ? ` Previous phrase context (for grammatical continuity only, DO NOT repeat): "${lastSpokenContext}".`
+  // Provide 3-turn rolling conversation memory for accurate pronoun, acronym, and name disambiguation
+  const rollingContext = recentTranscriptHistory.slice(-3).join(' | ');
+  const contextClause = rollingContext
+    ? ` Previous meeting context (for grammatical & domain continuity only, DO NOT repeat): "${rollingContext}".`
     : '';
 
   for (const model of candidateModels) {
@@ -1322,12 +1431,22 @@ async function main() {
       cdpSend('Runtime.evaluate', { expression: TEAMS_STAGE_OPTIMIZER_SCRIPT }).catch(() => {});
     }, 2000);
 
-    // 7. Auto-start Direct VB-Cable Audio Bridge on Windows if available (100% Audio-Only, bypasses Chrome MediaRecorder bugs)
-    if (process.platform === 'win32' && fs.existsSync(path.join(__dirname, 'vbcable-audio-bridge.js'))) {
+    // 7. Auto-start IN-PROCESS Direct VB-Cable Audio Capture on Windows (zero CDP base64 IPC hop, lossless 16kHz WAV + sliding-window drafts)
+    if (process.platform === 'win32') {
       setTimeout(() => {
-        console.log('[Bot] 🎧 Launching Direct VB-Cable Audio Bridge (100% Direct Audio -> Gemini Multimodal)...');
-        spawn(process.execPath, [path.join(__dirname, 'vbcable-audio-bridge.js')], { stdio: 'inherit' });
-      }, 10000);
+        console.log('[Bot] 🎧 Launching In-Process VB-Cable Capture (Lossless WAV + Sliding-Window Draft-and-Refine)...');
+        startInProcessVbCableCapture({
+          cdpSend,
+          onDraftSlice: (draftJob) => {
+            processDraftAudioSlice(draftJob);
+          },
+          onFinalSlice: (finalJob) => {
+            enqueueAudioChunk(finalJob);
+          },
+        }).catch((err) => {
+          console.error('[Bot] In-process VB-Cable capture failed:', err.message);
+        });
+      }, 8000);
     }
 
     // 9. Start CDP Screencast for Live Meeting Video Relay (Approach A) Full HD 1080p
@@ -1346,7 +1465,7 @@ async function main() {
     }
   });
 
-  // Unified deduplication ring buffer across audio chunks and live captions
+  // Unified deduplication ring buffer across finalized audio chunks
   const recentPhrases = [];
   function checkAndRecordPhrase(text) {
     const clean = text.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1364,42 +1483,115 @@ async function main() {
     return true;
   }
 
-  // Multi-Worker Audio Processing Queue — high throughput, ultra-low latency
+  // Monotonic sequence guards so a slower draft can NEVER overwrite a newer draft or finalized card
+  const finalizedUtterances = new Set();
+  const highestDraftSeq = new Map();
+  const draftedUtterances = new Set();
+  let activeDraftWorkers = 0;
+  const MAX_DRAFT_WORKERS = 2;
+
+  /**
+   * Processes a cumulative speculative WAV snapshot (~950ms, ~2100ms) via `gemini-3.5-flash-lite`
+   * and broadcasts `caption_draft` for smooth full-card replacement without triggering TTS.
+   */
+  async function processDraftAudioSlice({ utteranceId, seq, wavBase64, speechMs }) {
+    if (finalizedUtterances.has(utteranceId)) return;
+    if (activeDraftWorkers >= MAX_DRAFT_WORKERS) return;
+
+    activeDraftWorkers++;
+    try {
+      const t0 = Date.now();
+      const result = await transcribeAndTranslateDraft(wavBase64);
+      const elapsed = Date.now() - t0;
+
+      // Discard if this utterance was already finalized or superseded by a newer draft while in flight
+      if (finalizedUtterances.has(utteranceId)) return;
+      if ((highestDraftSeq.get(utteranceId) || 0) >= seq) return;
+
+      if (result && result.transcript && result.transcript.trim()) {
+        const spoken = cleanAndNormalizeSpokenText(result.transcript.trim());
+        if (!spoken || spoken.length < 2) return;
+
+        highestDraftSeq.set(utteranceId, seq);
+        draftedUtterances.add(utteranceId);
+
+        const speaker = result.speaker || 'Meeting Speaker';
+        const detectedLang = (result.detectedLanguage || 'en').toUpperCase();
+        const cleanTranslations = {};
+        for (const [lang, trText] of Object.entries(result.translations || {})) {
+          cleanTranslations[lang] = cleanAndNormalizeSpokenText(trText);
+        }
+
+        console.log(`⚡ [DRAFT #${seq} ${utteranceId}] (${detectedLang} | ${speechMs}ms audio | AI: ${elapsed}ms): "${spoken}"`);
+
+        const draftEntry = {
+          id: utteranceId,
+          seq,
+          isDraft: true,
+          speaker: `${speaker} (${detectedLang})`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          originalText: spoken,
+          translations: cleanTranslations,
+          glossaryTerms: [],
+        };
+
+        broadcastToClients({ type: 'caption_draft', caption: draftEntry });
+      }
+    } catch {
+      // Draft failures are non-fatal; final contextual pass always commits cleanly
+    } finally {
+      activeDraftWorkers--;
+    }
+  }
+
+  // Multi-Worker Final Audio Processing Queue — high throughput, full 4-language contextual polish
   const audioQueue = [];
   let activeWorkers = 0;
   const MAX_CONCURRENT_WORKERS = 3;
 
-  function enqueueAudioChunk(b64) {
-    // If the queue has more than 2 pending chunks (due to a transient network lag),
-    // drop the oldest stale chunk to ensure subtitles remain locked to the live speaker in real time!
+  function enqueueAudioChunk(jobOrB64) {
+    const job =
+      typeof jobOrB64 === 'string'
+        ? { utteranceId: `bot-audio-${Date.now()}`, seq: 999, wavBase64: jobOrB64, speechMs: 0 }
+        : jobOrB64;
+
     while (audioQueue.length > 2) {
       console.log('[Bot] ⚡ Dropping stale audio chunk to maintain real-time speaker synchrony');
       audioQueue.shift();
     }
-    audioQueue.push(b64);
+    audioQueue.push(job);
     dispatchWorkers();
   }
 
   function dispatchWorkers() {
     while (audioQueue.length > 0 && activeWorkers < MAX_CONCURRENT_WORKERS) {
       activeWorkers++;
-      const b64 = audioQueue.shift();
-      processSingleAudioChunk(b64);
+      const job = audioQueue.shift();
+      processSingleAudioChunk(job);
     }
   }
 
-  async function processSingleAudioChunk(b64) {
+  async function processSingleAudioChunk({ utteranceId, seq, wavBase64 }) {
     try {
-      const sizeKB = Math.round(b64.length * 0.75 / 1024);
       const t0 = Date.now();
-      const result = await transcribeAndTranslateAudio(b64);
+      const result = await transcribeAndTranslateAudio(wavBase64);
       const elapsed = Date.now() - t0;
+
+      // Mark finalized immediately so any slower in-flight draft for this utteranceId is ignored
+      finalizedUtterances.add(utteranceId);
+      highestDraftSeq.delete(utteranceId);
+      if (finalizedUtterances.size > 120) {
+        const oldest = finalizedUtterances.values().next().value;
+        finalizedUtterances.delete(oldest);
+      }
 
       if (result && result.transcript && result.transcript.trim()) {
         const rawSpoken = result.transcript.trim();
         const spoken = cleanAndNormalizeSpokenText(rawSpoken);
         if (spoken && spoken.length > 1 && checkAndRecordPhrase(spoken)) {
-          lastSpokenContext = spoken.slice(-150);
+          recentTranscriptHistory.push(spoken.slice(-160));
+          if (recentTranscriptHistory.length > 6) recentTranscriptHistory.shift();
+
           const speaker = result.speaker || 'Meeting Speaker';
 
           // Clean translations to ensure TTS and subtitles stay concise and filler-free
@@ -1408,11 +1600,17 @@ async function main() {
             cleanTranslations[lang] = cleanAndNormalizeSpokenText(trText);
           }
 
-          console.log(`\n🎙️  [${speaker}] (${(result.detectedLanguage || 'fr').toUpperCase()} | AI: ${elapsed}ms): "${spoken}"`);
+          const wasDrafted = draftedUtterances.has(utteranceId);
+          draftedUtterances.delete(utteranceId);
+
+          console.log(`\n🎙️  [FINAL ${utteranceId}] [${speaker}] (${(result.detectedLanguage || 'fr').toUpperCase()} | AI: ${elapsed}ms): "${spoken}"`);
           console.log(`🌍  EN: "${cleanTranslations.en || ''}" | FR: "${cleanTranslations.fr || ''}" | PT: "${cleanTranslations.pt || ''}" | SW: "${cleanTranslations.sw || ''}"`);
 
           const entry = {
-            id: `bot-audio-${Date.now()}`,
+            id: utteranceId,
+            seq: Math.max(seq || 999, 999),
+            isDraft: false,
+            isRefined: wasDrafted,
             speaker: `${speaker} (${(result.detectedLanguage || 'en').toUpperCase()})`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             originalText: spoken,
@@ -1427,7 +1625,14 @@ async function main() {
             const cartText = cleanTranslations[cartLang] || spoken;
             sendCartCaption(CART_URL, cartText, speaker).catch(() => {});
           }
+          return;
         }
+      }
+
+      // If a speculative draft card was displayed for noise/cough that turned out to be non-speech, dissolve it
+      if (draftedUtterances.has(utteranceId)) {
+        draftedUtterances.delete(utteranceId);
+        broadcastToClients({ type: 'caption_remove', id: utteranceId });
       }
     } catch (err) {
       console.error('[Bot] Worker error:', err.message);

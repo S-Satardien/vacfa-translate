@@ -44,6 +44,7 @@ import {
 } from '@/lib/live-sync';
 import { INITIAL_INSTRUCTION_CAPTION } from '@/lib/demo-data';
 import { sendTeamsCartCaption } from '@/lib/teams-cart';
+import { createRealtimeWssSubscriber, type RealtimeWssSubscriber } from '@/lib/realtime-wss-client';
 import styles from './LiveSession.module.css';
 
 interface LiveSessionClientProps {
@@ -491,8 +492,9 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     };
   }, [audioLang, currentSession.id, currentSession.languages]);
 
-  // Microsoft Teams Bot Ingestion Relay Bridge (Local Port 9876 + Remote HTTPS Cloud SSE)
+  // Microsoft Teams Bot Ingestion Relay Bridge (Local WS on Host + Zero-Cost Persistent Dual-Broker WSS for Remote Colleagues)
   const [isBotRelayConnected, setIsBotRelayConnected] = useState(false);
+  const [relayTransport, setRelayTransport] = useState<'standby' | 'local' | 'wss-tunnel' | 'cloud-sse'>('standby');
   const playCaptionAudioRef = useRef(playCaptionAudio);
   playCaptionAudioRef.current = playCaptionAudio;
 
@@ -501,32 +503,91 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
     let ws: WebSocket | null = null;
     let eventSource: EventSource | null = null;
-    let cloudEventSource: EventSource | null = null;
+    let realtimeWssSub: RealtimeWssSubscriber | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-    let cloudFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let remoteFallbackTimer: ReturnType<typeof setTimeout> | null = null;
     let isLocalConnected = false;
     let hadLocalConnection = false;
 
     const activeSlot = (sessionId || currentSession.id || 'session-009').replace(/[^a-zA-Z0-9_-]/g, '');
-    const cloudTopic = `vacfa-translate-live-9f4a2c-${activeSlot}`;
+
+    /**
+     * Upserts a live sliding-window draft card in place while respecting monotonic `seq` ordering
+     * so slower out-of-order drafts can never overwrite newer drafts or finalized captions.
+     */
+    function upsertDraftCaption(draft: CaptionEntry) {
+      setCaptions((prev) => {
+        const idx = prev.findIndex((c) => c.id === draft.id);
+        if (idx !== -1) {
+          const existing = prev[idx];
+          if (!existing.isDraft) return prev; // Finalized card is locked
+          if ((draft.seq ?? 0) <= (existing.seq ?? 0)) return prev;
+          const updated = [...prev];
+          updated[idx] = { ...draft, isDraft: true };
+          return updated;
+        }
+        return [...prev, { ...draft, isDraft: true }];
+      });
+      setPartialText('');
+      setCurrentSpeaker(draft.speaker);
+    }
+
+    /**
+     * Smoothly replaces an existing live draft card in place (or appends a new finalized card)
+     * and fires TTS playback once per finalized utterance.
+     */
+    function commitFinalCaption(cap: CaptionEntry, allowAudioPlayback: boolean) {
+      setCaptions((prev) => {
+        const idx = prev.findIndex((c) => c.id === cap.id);
+        if (idx !== -1) {
+          const existing = prev[idx];
+          const textChanged =
+            existing.originalText.trim().toLowerCase() !== cap.originalText.trim().toLowerCase();
+          const updated = [...prev];
+          updated[idx] = {
+            ...cap,
+            isDraft: false,
+            isRefined: Boolean(existing.isDraft && textChanged),
+          };
+          return updated;
+        }
+
+        const isDup = prev.slice(-8).some(
+          (c) =>
+            !c.isDraft &&
+            c.originalText.trim().toLowerCase() === cap.originalText.trim().toLowerCase()
+        );
+        if (isDup) return prev;
+        return [...prev, { ...cap, isDraft: false }];
+      });
+      setPartialText('');
+      setCurrentSpeaker(cap.speaker);
+      if (allowAudioPlayback) {
+        playCaptionAudioRef.current(cap);
+      }
+    }
 
     function handlePayload(data: any, allowAudioPlayback = true) {
-      if (data.type === 'caption') {
-        const cap: CaptionEntry = data.caption;
+      if (!data || typeof data !== 'object') return;
+
+      if (data.type === 'caption_draft' && data.caption) {
+        upsertDraftCaption(data.caption as CaptionEntry);
+      } else if (data.type === 'caption' && data.caption) {
+        commitFinalCaption(data.caption as CaptionEntry, allowAudioPlayback);
+      } else if (data.type === 'caption_remove' && data.id) {
+        setCaptions((prev) => prev.filter((c) => c.id !== data.id));
+      } else if (data.type === 'caption_history' && Array.isArray(data.captions)) {
         setCaptions((prev) => {
-          const isDup = prev.slice(-8).some(
-            (c) =>
-              c.id === cap.id ||
-              c.originalText.trim().toLowerCase() === cap.originalText.trim().toLowerCase()
-          );
-          if (isDup) return prev;
-          return [...prev, cap];
+          const existingIds = new Set(prev.map((c) => c.id));
+          const merged = [...prev];
+          for (const histCap of data.captions as CaptionEntry[]) {
+            if (!existingIds.has(histCap.id)) {
+              existingIds.add(histCap.id);
+              merged.push({ ...histCap, isDraft: false });
+            }
+          }
+          return merged;
         });
-        setPartialText('');
-        setCurrentSpeaker(cap.speaker);
-        if (allowAudioPlayback) {
-          playCaptionAudioRef.current(cap);
-        }
       } else if (data.type === 'interim') {
         setCurrentSpeaker(data.speaker || 'Teams Speaker');
         setPartialText(data.text);
@@ -538,38 +599,29 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         }
       } else if (data.type === 'video_status') {
         setVideoFeedActive(Boolean(data.active));
-        if (data.videoUrl) setVideoFeedUrl(data.videoUrl);
+        if (data.videoUrl && isLocalConnected) setVideoFeedUrl(data.videoUrl);
       }
     }
 
     /**
-     * Subscribes remote colleague browsers (where 127.0.0.1:9876 is unreachable) to the
-     * HTTPS Server-Sent Events cloud relay with 90s catch-up so participants immediately
-     * see active captions and hear real-time TTS without speaking historical backlog.
+     * Connects remote colleague browsers directly to the zero-cost persistent dual-broker WSS
+     * channel (EMQX + Mosquitto failover) for unthrottled ~180ms live drafts, refined finals,
+     * and instant retained-history catch-up.
      */
-    function connectCloudRelay() {
-      if (cloudEventSource || isLocalConnected) return;
-      try {
-        cloudEventSource = new EventSource(`https://ntfy.sh/${cloudTopic}/sse?since=90s`);
-        cloudEventSource.onopen = () => {
-          setIsBotRelayConnected(true);
-        };
-        cloudEventSource.onmessage = (event) => {
-          try {
-            const envelope = JSON.parse(event.data);
-            if (envelope?.event === 'message' && typeof envelope.message === 'string') {
-              const payload = JSON.parse(envelope.message);
-              const ageMs = typeof envelope.time === 'number' ? Date.now() - envelope.time * 1000 : 0;
-              handlePayload(payload, ageMs < 12000);
-            }
-          } catch {}
-        };
-        cloudEventSource.onerror = () => {
-          if (!isLocalConnected) {
-            setIsBotRelayConnected(false);
-          }
-        };
-      } catch {}
+    function connectRemotePersistentWss() {
+      if (realtimeWssSub || isLocalConnected) return;
+      realtimeWssSub = createRealtimeWssSubscriber({
+        slot: activeSlot,
+        onStatusChange: (connected) => {
+          if (isLocalConnected) return;
+          setIsBotRelayConnected(connected);
+          setRelayTransport(connected ? 'wss-tunnel' : 'standby');
+        },
+        onMessage: (payload, isRetainedHistory) => {
+          if (isLocalConnected) return;
+          handlePayload(payload, !isRetainedHistory);
+        },
+      });
     }
 
     function tryWebSocket() {
@@ -580,13 +632,14 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
           isLocalConnected = true;
           hadLocalConnection = true;
           setIsBotRelayConnected(true);
-          if (cloudFallbackTimer) {
-            clearTimeout(cloudFallbackTimer);
-            cloudFallbackTimer = null;
+          setRelayTransport('local');
+          if (remoteFallbackTimer) {
+            clearTimeout(remoteFallbackTimer);
+            remoteFallbackTimer = null;
           }
-          if (cloudEventSource) {
-            cloudEventSource.close();
-            cloudEventSource = null;
+          if (realtimeWssSub) {
+            realtimeWssSub.close();
+            realtimeWssSub = null;
           }
         };
 
@@ -599,20 +652,20 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
         ws.onerror = () => {
           if (!isLocalConnected) {
-            connectCloudRelay();
+            connectRemotePersistentWss();
             if (hadLocalConnection) tryEventSource();
           }
         };
 
         ws.onclose = () => {
           isLocalConnected = false;
-          connectCloudRelay();
+          connectRemotePersistentWss();
           if (hadLocalConnection) {
             reconnectTimeout = setTimeout(tryWebSocket, 5000);
           }
         };
       } catch {
-        connectCloudRelay();
+        connectRemotePersistentWss();
       }
     }
 
@@ -624,6 +677,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
           isLocalConnected = true;
           hadLocalConnection = true;
           setIsBotRelayConnected(true);
+          setRelayTransport('local');
         };
 
         eventSource.onmessage = (event) => {
@@ -636,28 +690,28 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         eventSource.onerror = () => {
           isLocalConnected = false;
           eventSource?.close();
-          connectCloudRelay();
+          connectRemotePersistentWss();
         };
       } catch {
-        connectCloudRelay();
+        connectRemotePersistentWss();
       }
     }
 
-    // Fast-fail into HTTPS Cloud SSE within 600ms for remote colleagues so they never wait on localhost timeouts
-    cloudFallbackTimer = setTimeout(() => {
+    // Fast-fail into persistent remote WSS within 450ms so remote colleagues never wait on localhost timeouts
+    remoteFallbackTimer = setTimeout(() => {
       if (!isLocalConnected) {
-        connectCloudRelay();
+        connectRemotePersistentWss();
       }
-    }, 600);
+    }, 450);
 
     tryWebSocket();
 
     return () => {
-      if (cloudFallbackTimer) clearTimeout(cloudFallbackTimer);
+      if (remoteFallbackTimer) clearTimeout(remoteFallbackTimer);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (ws) ws.close();
       if (eventSource) eventSource.close();
-      if (cloudEventSource) cloudEventSource.close();
+      if (realtimeWssSub) realtimeWssSub.close();
     };
   }, [sessionId, currentSession.id]);
 
@@ -795,30 +849,54 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         {/* Captions Feed */}
         <div className={styles.teamsCaptionsStream}>
           <AnimatePresence initial={false}>
-            {captions.map((cap, index) => (
-              <motion.div
-                key={`${cap.id}-${index}`}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={styles.teamsCaptionCard}
-              >
-                <div className={styles.teamsCaptionMeta}>
-                  <span><Mic size={11} className="inline mr-1" /> {cap.speaker}</span>
-                  <span>{cap.timestamp}</span>
-                </div>
-                {captionLang !== 'en' && (
-                  <div className={styles.teamsOriginalSnippet}>
-                    {cap.originalText}
+            {captions.map((cap) => {
+              const displayText =
+                cap.translations?.[captionLang] ||
+                (cap.isDraft ? cap.translations?.en || cap.originalText : cap.originalText);
+              return (
+                <motion.div
+                  key={cap.id}
+                  layout="position"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                  className={styles.teamsCaptionCard}
+                  style={
+                    cap.isDraft
+                      ? { borderColor: 'rgba(232, 72, 94, 0.55)', background: 'rgba(42, 28, 32, 0.85)' }
+                      : undefined
+                  }
+                >
+                  <div className={styles.teamsCaptionMeta}>
+                    <span>
+                      <Mic size={11} className="inline mr-1" /> {cap.speaker}
+                      {cap.isDraft && <span className={styles.liveDraftPill}>Live</span>}
+                      {!cap.isDraft && cap.isRefined && (
+                        <span className={styles.refinedPill}>
+                          <CheckCircle2 size={10} /> Refined
+                        </span>
+                      )}
+                    </span>
+                    <span>{cap.timestamp}</span>
                   </div>
-                )}
-                <div className={styles.teamsTranslatedSnippet}>
-                  {renderTextWithGlossary(
-                    cap.translations?.[captionLang] || cap.originalText,
-                    cap.glossaryTerms
+                  {cap.originalText !== displayText && (
+                    <div className={styles.teamsOriginalSnippet}>
+                      {cap.originalText}
+                    </div>
                   )}
-                </div>
-              </motion.div>
-            ))}
+                  <motion.div
+                    key={`${cap.id}-${cap.seq ?? 0}-${cap.isDraft ? 'd' : 'f'}`}
+                    initial={{ opacity: 0.72 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.18 }}
+                    className={styles.teamsTranslatedSnippet}
+                  >
+                    {renderTextWithGlossary(displayText, cap.glossaryTerms)}
+                  </motion.div>
+                </motion.div>
+              );
+            })}
 
             {partialText && (
               <motion.div
@@ -922,7 +1000,13 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   border: `1px solid ${isBotRelayConnected ? 'var(--success)' : 'rgba(84, 91, 199, 0.4)'}`,
                 }}>
                   <Bot size={12} className={isBotRelayConnected ? 'animate-pulse' : ''} />
-                  {isBotRelayConnected ? 'Teams Bot Linked (Hearing All Attendees)' : `${currentSession.meetingIntegration?.platform?.toUpperCase() || 'TEAMS'} Bot Standby`}
+                  {isBotRelayConnected
+                    ? relayTransport === 'wss-tunnel'
+                      ? 'Direct Realtime WSS (Sub-2s Live)'
+                      : relayTransport === 'local'
+                        ? 'Local Realtime WS (Host Connected)'
+                        : 'Cloud Live Linked (Hearing All Attendees)'
+                    : `${currentSession.meetingIntegration?.platform?.toUpperCase() || 'TEAMS'} Bot Standby`}
                 </span>
               )}
             </div>
@@ -1175,35 +1259,74 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
               </div>
             )}
             <AnimatePresence initial={false}>
-              {captions.map((cap, index) => (
-                <motion.div
-                  key={`${cap.id}-${index}`}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={styles.captionBox}
-                >
-                  <div className={styles.captionHeader}>
-                    <span className={styles.speaker}>
-                      {cap.id.startsWith('instruction') ? (
-                        <Globe size={14} className="inline mr-1 text-vacfa-red-light" />
-                      ) : (
-                        <Mic size={14} className="inline mr-1" />
-                      )}
-                      {' '}{cap.speaker}
-                    </span>
-                    <span>{cap.timestamp}</span>
-                  </div>
-                  {cap.originalText !== (cap.translations?.[captionLang] || cap.originalText) && (
-                    <div className={styles.originalText}>{cap.originalText}</div>
-                  )}
-                  <div className={styles.translatedText}>
-                    {renderTextWithGlossary(
-                      cap.translations?.[captionLang] || cap.originalText,
-                      cap.glossaryTerms
+              {captions.map((cap) => {
+                const displayText =
+                  cap.translations?.[captionLang] ||
+                  (cap.isDraft ? cap.translations?.en || cap.originalText : cap.originalText);
+                const cardClassName = `${styles.captionBox} ${
+                  cap.isDraft
+                    ? styles.captionBoxDraft
+                    : cap.isRefined
+                      ? styles.captionBoxRefined
+                      : ''
+                }`;
+
+                return (
+                  <motion.div
+                    key={cap.id}
+                    layout="position"
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.22, ease: 'easeOut' }}
+                    className={cardClassName}
+                  >
+                    <div className={styles.captionHeader}>
+                      <span className={styles.speaker}>
+                        {cap.id.startsWith('instruction') ? (
+                          <Globe size={14} className="inline mr-1 text-vacfa-red-light" />
+                        ) : (
+                          <Mic size={14} className="inline mr-1" />
+                        )}
+                        {' '}{cap.speaker}
+                        {cap.isDraft && (
+                          <span className={styles.liveDraftPill}>
+                            <span
+                              className="animate-pulse"
+                              style={{
+                                width: '6px',
+                                height: '6px',
+                                borderRadius: '50%',
+                                background: 'var(--vacfa-red-light, #E8485E)',
+                                display: 'inline-block',
+                              }}
+                            />
+                            Live
+                          </span>
+                        )}
+                        {!cap.isDraft && cap.isRefined && (
+                          <span className={styles.refinedPill}>
+                            <CheckCircle2 size={11} /> Refined
+                          </span>
+                        )}
+                      </span>
+                      <span>{cap.timestamp}</span>
+                    </div>
+                    {cap.originalText !== displayText && (
+                      <div className={styles.originalText}>{cap.originalText}</div>
                     )}
-                  </div>
-                </motion.div>
-              ))}
+                    <motion.div
+                      key={`${cap.id}-${cap.seq ?? 0}-${cap.isDraft ? 'd' : 'f'}`}
+                      initial={{ opacity: 0.72 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                      className={styles.translatedText}
+                    >
+                      {renderTextWithGlossary(displayText, cap.glossaryTerms)}
+                    </motion.div>
+                  </motion.div>
+                );
+              })}
 
               {partialText && (
                 <motion.div

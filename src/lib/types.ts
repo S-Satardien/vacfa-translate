@@ -82,6 +82,9 @@ export interface CaptionEntry {
   originalText: string;
   translations: Record<string, string>; // language code -> translation
   glossaryTerms?: string[]; // terms that appear in this caption
+  isDraft?: boolean; // true while live sliding-window draft is still refining
+  seq?: number; // monotonic sequence counter preventing stale draft overwrites
+  isRefined?: boolean; // true when a live draft smoothly finalized with contextual refinement
 }
 
 // Translation channel

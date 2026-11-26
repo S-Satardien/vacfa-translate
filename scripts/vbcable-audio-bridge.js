@@ -1,15 +1,15 @@
 /**
- * VACFA Translate — Direct VB-Cable Audio Bridge for Microsoft Teams Bot
+ * VACFA Translate — Direct VB-Cable Audio Bridge & Sliding-Window VAD Capture
  *
- * Bypasses Microsoft Teams' single-language DOM Live Captions AND Chrome's broken
- * remote-WebRTC MediaRecorder (`recBytes: 0`) by:
- *  1. Routing the live Teams Chrome tab's <audio> elements to `CABLE Input (VB-Audio Virtual Cable)`
- *     via `HTMLMediaElement.setSinkId()`.
- *  2. Silencing the Teams DOM caption binding (`window.vacfaSpeechData`) so single-language
- *     Teams ASR hallucinations never pollute bilingual meetings.
- *  3. Capturing 16kHz 16-bit mono PCM directly from `CABLE Output (VB-Audio Virtual Cable)`
- *     via FFmpeg DirectShow, slicing on word-boundary soft pauses (1.8s-3.0s), encoding to
- *     WebM/Opus, and injecting straight into `window.vacfaAudioChunk` for Gemini Multimodal.
+ * Eliminates Teams' single-language DOM Live Captions AND Chrome's broken remote-WebRTC
+ * MediaRecorder by routing Teams `<audio>` elements to `CABLE Input (VB-Audio Virtual Cable)`
+ * and capturing 16kHz 16-bit mono PCM directly from `CABLE Output (VB-Audio Virtual Cable)`.
+ *
+ * Supports two modes:
+ *  1. In-process mode (`startInProcessVbCableCapture`) — zero Chrome CDP base64 IPC hop,
+ *     zero secondary FFmpeg spawn; emits cumulative lossless 16kHz WAV drafts (~1.0s, ~2.1s)
+ *     followed by a full-context final WAV slice on clause pause for smooth full-card refinement.
+ *  2. Standalone CLI mode (`node scripts/vbcable-audio-bridge.js`) — hot-injectable fallback.
  */
 
 const http = require('http');
@@ -38,29 +38,6 @@ const logger = {
     process.stderr.write(`${new Date().toISOString()} [WARN] [${scope}] ${msg}\n`);
   },
 };
-
-/**
- * Fetches JSON metadata from the Chrome DevTools Protocol HTTP endpoint.
- * @param {string} urlPath - CDP path (e.g. '/json')
- * @returns {Promise<Array<object>>}
- */
-function fetchCdpPages(urlPath = '/json') {
-  return new Promise((resolve, reject) => {
-    http
-      .get(`http://127.0.0.1:${DEBUG_PORT}${urlPath}`, (res) => {
-        let data = '';
-        res.on('data', (c) => (data += c));
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch {
-            resolve([]);
-          }
-        });
-      })
-      .on('error', reject);
-  });
-}
 
 /**
  * Wraps raw 16kHz 16-bit mono s16le PCM bytes in a lossless 44-byte RIFF WAV header
@@ -96,7 +73,7 @@ function wrapPcmInWavHeader(pcmBuffer, sampleRate = 16000) {
 
 /**
  * Encodes normalized 16kHz PCM to high-bitrate transparent 160kbps WebM/Opus
- * for hot-patching an already-running `teams-bot-runner.js` process expecting `audio/webm`.
+ * for backward-compatible standalone hot-patching.
  * @param {Buffer} pcmBuffer - Raw 16kHz s16le mono PCM bytes
  * @returns {Promise<Buffer>} High-bitrate WebM/Opus buffer
  */
@@ -125,8 +102,240 @@ function encodePcmToTransparentWebm(pcmBuffer) {
 }
 
 /**
- * Connects to the live Teams Chrome tab, switches its audio sink to VB-Audio Virtual Cable,
- * disables Teams' single-language DOM captions, and streams direct bilingual audio to Gemini.
+ * JavaScript snippet evaluated inside the Teams Chrome tab to route all meeting `<audio>`
+ * playback into VB-Audio Virtual Cable Input and keep Teams' single-language DOM captions silenced.
+ */
+const ROUTE_TEAMS_AUDIO_TO_VBCABLE_EXPR = `
+(async function(){
+  window.vacfaSpeechData = function() {};
+  window.__VACFA_AUDIO_ONLY_MODE__ = true;
+
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  const cableIn = devs.find(d => d.kind === 'audiooutput' && /cable input/i.test(d.label) && d.deviceId !== 'communications');
+  if (!cableIn) return { error: 'CABLE Input device not found', outputs: devs.filter(d => d.kind === 'audiooutput').map(d => d.label) };
+
+  async function bindAllAudioToCable() {
+    const els = Array.from(document.querySelectorAll('audio, video'));
+    let count = 0;
+    for (const el of els) {
+      if (el.setSinkId && el.sinkId !== cableIn.deviceId) {
+        try {
+          await el.setSinkId(cableIn.deviceId);
+          el.muted = false;
+          el.volume = 1.0;
+          count++;
+        } catch(e) {}
+      }
+    }
+    return count;
+  }
+
+  const boundNow = await bindAllAudioToCable();
+  if (!window.__VACFA_SINK_WATCHER__) {
+    window.__VACFA_SINK_WATCHER__ = setInterval(() => { bindAllAudioToCable().catch(() => {}); }, 2500);
+  }
+
+  return { ok: true, sinkLabel: cableIn.label, sinkId: cableIn.deviceId, boundNow };
+})()
+`;
+
+/**
+ * Starts low-latency in-process VB-Cable capture with cumulative sliding-window VAD.
+ * Emits speculative drafts (`onDraftSlice`) at ~950ms and every +1,150ms of active speech,
+ * then emits the full-context audio (`onFinalSlice`) at natural clause pauses.
+ *
+ * @param {object} options - Capture configuration
+ * @param {(method: string, params?: object) => Promise<object>} [options.cdpSend] - Optional CDP sender to bind Teams `<audio>` sink to CABLE Input
+ * @param {(payload: { utteranceId: string, seq: number, wavBase64: string, speechMs: number }) => void} [options.onDraftSlice] - Invoked for incremental live drafts
+ * @param {(payload: { utteranceId: string, seq: number, wavBase64: string, speechMs: number }) => void} options.onFinalSlice - Invoked for finalized clauses
+ * @param {string} [options.device] - DirectShow audio capture device name
+ * @returns {Promise<{ stop: () => void, process: import('child_process').ChildProcess }>}
+ */
+async function startInProcessVbCableCapture({
+  cdpSend,
+  onDraftSlice,
+  onFinalSlice,
+  device = DSHOW_DEVICE,
+}) {
+  if (cdpSend) {
+    try {
+      const res = await cdpSend('Runtime.evaluate', {
+        awaitPromise: true,
+        returnByValue: true,
+        expression: ROUTE_TEAMS_AUDIO_TO_VBCABLE_EXPR,
+      });
+      logger.info('VBCable', 'Audio Sink Routing Result: ' + JSON.stringify(res?.result?.result?.value));
+    } catch (err) {
+      logger.warn('VBCable', `Sink routing notice: ${err.message}`);
+    }
+  }
+
+  // Lower dynaudnorm frame window (f=80ms) + 30ms DirectShow buffer cuts filter lookahead by ~50%
+  const ff = spawn('ffmpeg', [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-f', 'dshow',
+    '-audio_buffer_size', '30',
+    '-i', `audio=${device}`,
+    '-af', 'highpass=f=85,dynaudnorm=f=80:g=9:m=6',
+    '-ar', '16000',
+    '-ac', '1',
+    '-f', 's16le',
+    'pipe:1',
+  ]);
+
+  logger.info('VBCable', `In-process 16kHz lossless PCM capture active on "${device}" (Sliding-Window Draft-and-Refine Mode)`);
+
+  let preRollRing = [];
+  let pcmChunks = [];
+  let speechMs = 0;
+  let silentMs = 0;
+  let inSpeech = false;
+  let utteranceCounter = 0;
+  let currentUtteranceId = '';
+  let draftSeq = 0;
+  let lastDraftAtSpeechMs = 0;
+
+  // Timing constants tuned for ~1.3s Time-to-First-Word + accurate full-context finalization
+  const RMS_VOICE_THRESHOLD = 280;
+  const FIRST_DRAFT_MS = 950;
+  const NEXT_DRAFT_STEP_MS = 1150;
+  const MAX_DRAFTS_PER_UTTERANCE = 3;
+
+  ff.stdout.on('data', (pcm) => {
+    // 16kHz * 16-bit mono = 32 bytes/ms
+    const chunkMs = pcm.length / 32;
+
+    let sumSq = 0;
+    const samples = Math.floor(pcm.length / 2);
+    for (let i = 0; i < samples; i++) {
+      const s = pcm.readInt16LE(i * 2);
+      sumSq += s * s;
+    }
+    const rms = samples > 0 ? Math.sqrt(sumSq / samples) : 0;
+
+    if (!inSpeech) {
+      // Retain ~240ms rolling pre-roll so initial consonants are never clipped
+      preRollRing.push(pcm);
+      if (preRollRing.length > 6) preRollRing.shift();
+
+      if (rms > RMS_VOICE_THRESHOLD) {
+        inSpeech = true;
+        utteranceCounter++;
+        currentUtteranceId = `utt-${Date.now()}-${utteranceCounter}`;
+        draftSeq = 0;
+        lastDraftAtSpeechMs = 0;
+        pcmChunks = [...preRollRing];
+        preRollRing = [];
+        speechMs = chunkMs;
+        silentMs = 0;
+      }
+      return;
+    }
+
+    pcmChunks.push(pcm);
+    if (rms > RMS_VOICE_THRESHOLD) {
+      speechMs += chunkMs;
+      silentMs = 0;
+    } else {
+      silentMs += chunkMs;
+    }
+
+    // 1. Check Final Commit Triggers first (avoid emitting a redundant draft right before a final)
+    const genuineEndOfTurn = speechMs >= 600 && silentMs >= 750;
+    const fullClausePause = speechMs >= 2000 && silentMs >= 400;
+    const wordBoundarySoftCeiling = speechMs >= 4200 && silentMs >= 160;
+    const hardSafetyCeiling = speechMs >= 5800;
+
+    if (genuineEndOfTurn || fullClausePause || wordBoundarySoftCeiling || hardSafetyCeiling) {
+      const fullPcm = Buffer.concat(pcmChunks);
+      const finalUtteranceId = currentUtteranceId;
+      const finalSeq = draftSeq + 100;
+      const spokenSnapshotMs = Math.round(speechMs);
+
+      pcmChunks = [];
+      inSpeech = false;
+      speechMs = 0;
+      silentMs = 0;
+      currentUtteranceId = '';
+      draftSeq = 0;
+      lastDraftAtSpeechMs = 0;
+
+      if (fullPcm.length >= 14000) {
+        const wavBuf = wrapPcmInWavHeader(fullPcm, 16000);
+        onFinalSlice({
+          utteranceId: finalUtteranceId,
+          seq: finalSeq,
+          wavBase64: wavBuf.toString('base64'),
+          speechMs: spokenSnapshotMs,
+        });
+      }
+      return;
+    }
+
+    // 2. Cumulative Speculative Draft Trigger (gives colleagues ~1.3s live card appearance)
+    if (onDraftSlice && draftSeq < MAX_DRAFTS_PER_UTTERANCE) {
+      const shouldEmitFirstDraft = draftSeq === 0 && speechMs >= FIRST_DRAFT_MS;
+      const shouldEmitNextDraft = draftSeq > 0 && speechMs - lastDraftAtSpeechMs >= NEXT_DRAFT_STEP_MS;
+
+      if (shouldEmitFirstDraft || shouldEmitNextDraft) {
+        draftSeq++;
+        lastDraftAtSpeechMs = speechMs;
+        const snapshotPcm = Buffer.concat(pcmChunks);
+        const wavBuf = wrapPcmInWavHeader(snapshotPcm, 16000);
+        onDraftSlice({
+          utteranceId: currentUtteranceId,
+          seq: draftSeq,
+          wavBase64: wavBuf.toString('base64'),
+          speechMs: Math.round(speechMs),
+        });
+      }
+    }
+  });
+
+  ff.stderr.on('data', (err) => {
+    logger.warn('FFmpeg', err.toString().trim());
+  });
+
+  ff.on('close', (code) => {
+    logger.warn('FFmpeg', `DirectShow capture exited with code ${code}`);
+  });
+
+  return {
+    process: ff,
+    stop() {
+      try {
+        ff.kill('SIGTERM');
+      } catch {}
+    },
+  };
+}
+
+/**
+ * Fetches JSON metadata from the Chrome DevTools Protocol HTTP endpoint (standalone CLI mode).
+ * @param {string} urlPath - CDP path (e.g. '/json')
+ * @returns {Promise<Array<object>>}
+ */
+function fetchCdpPages(urlPath = '/json') {
+  return new Promise((resolve, reject) => {
+    http
+      .get(`http://127.0.0.1:${DEBUG_PORT}${urlPath}`, (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve([]);
+          }
+        });
+      })
+      .on('error', reject);
+  });
+}
+
+/**
+ * Standalone CLI entry point for hot-attaching VB-Cable capture to an already-running Chrome CDP tab.
  * @returns {Promise<void>}
  */
 async function startVbCableBridge() {
@@ -140,12 +349,6 @@ async function startVbCableBridge() {
   const ws = new WebSocket(teamsPage.webSocketDebuggerUrl);
   let cmdId = 1000;
 
-  /**
-   * Sends a CDP command over the active WebSocket.
-   * @param {string} method - CDP method name
-   * @param {object} params - CDP parameters
-   * @returns {Promise<object>}
-   */
   function cdpCall(method, params = {}) {
     const id = ++cmdId;
     return new Promise((resolve) => {
@@ -164,145 +367,23 @@ async function startVbCableBridge() {
   }
 
   ws.on('open', async () => {
-    logger.info('Bridge', 'Connected to live Teams Chrome tab via CDP');
-
-    // 1. Disable Teams single-language DOM caption path & route <audio> elements to CABLE Input
-    const setupRes = await cdpCall('Runtime.evaluate', {
-      awaitPromise: true,
-      returnByValue: true,
-      expression: `
-        (async function(){
-          // Silence single-language Teams DOM captions so English/French switching is 100% Gemini Direct Audio
-          window.vacfaSpeechData = function() {};
-          window.__VACFA_AUDIO_ONLY_MODE__ = true;
-
-          const devs = await navigator.mediaDevices.enumerateDevices();
-          const cableIn = devs.find(d => d.kind === 'audiooutput' && /cable input/i.test(d.label) && d.deviceId !== 'communications');
-          if (!cableIn) return { error: 'CABLE Input device not found', outputs: devs.filter(d => d.kind === 'audiooutput').map(d => d.label) };
-
-          async function bindAllAudioToCable() {
-            const els = Array.from(document.querySelectorAll('audio, video'));
-            let count = 0;
-            for (const el of els) {
-              if (el.setSinkId && el.sinkId !== cableIn.deviceId) {
-                try {
-                  await el.setSinkId(cableIn.deviceId);
-                  el.muted = false;
-                  el.volume = 1.0;
-                  count++;
-                } catch(e) {}
-              }
-            }
-            return count;
-          }
-
-          const boundNow = await bindAllAudioToCable();
-          if (!window.__VACFA_SINK_WATCHER__) {
-            window.__VACFA_SINK_WATCHER__ = setInterval(() => { bindAllAudioToCable().catch(() => {}); }, 3000);
-          }
-
-          return { ok: true, sinkLabel: cableIn.label, sinkId: cableIn.deviceId, boundNow };
-        })()
-      `,
-    });
-
-    logger.info('Bridge', 'Audio Sink Routing Result: ' + JSON.stringify(setupRes?.result?.result?.value));
-
-    // 2. Start continuous FFmpeg DirectShow capture with broadcast loudness normalization
-    const ff = spawn('ffmpeg', [
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-f', 'dshow',
-      '-audio_buffer_size', '50',
-      '-i', `audio=${DSHOW_DEVICE}`,
-      '-af', 'highpass=f=85,dynaudnorm=f=150:g=11:m=6',
-      '-ar', '16000',
-      '-ac', '1',
-      '-f', 's16le',
-      'pipe:1',
-    ]);
-
-    logger.info('Bridge', `Direct 16kHz PCM Audio Capture active on "${DSHOW_DEVICE}" (100% Audio-Only Bilingual Mode)`);
-
-    let preRollRing = [];
-    let pcmChunks = [];
-    let speechMs = 0;
-    let silentMs = 0;
-    let inSpeech = false;
-    let sliceCount = 0;
-
-    ff.stdout.on('data', async (pcm) => {
-      // 16kHz * 16-bit mono = 32 bytes per millisecond
-      const chunkMs = pcm.length / 32;
-
-      let sumSq = 0;
-      const samples = Math.floor(pcm.length / 2);
-      for (let i = 0; i < samples; i++) {
-        const s = pcm.readInt16LE(i * 2);
-        sumSq += s * s;
-      }
-      const rms = samples > 0 ? Math.sqrt(sumSq / samples) : 0;
-
-      if (!inSpeech) {
-        // Keep ~250ms rolling pre-roll so initial consonants are never clipped
-        preRollRing.push(pcm);
-        if (preRollRing.length > 5) preRollRing.shift();
-
-        if (rms > 280) {
-          inSpeech = true;
-          pcmChunks = [...preRollRing];
-          preRollRing = [];
-          speechMs = chunkMs;
-          silentMs = 0;
+    logger.info('Bridge', 'Connected to live Teams Chrome tab via CDP (standalone CLI mode)');
+    await startInProcessVbCableCapture({
+      cdpSend: cdpCall,
+      onFinalSlice: async ({ wavBase64, speechMs, utteranceId }) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        let b64 = wavBase64;
+        if (USE_COMPAT_WEBM) {
+          const rawPcm = Buffer.from(wavBase64, 'base64').subarray(44);
+          const webmBuf = await encodePcmToTransparentWebm(rawPcm);
+          if (webmBuf.length <= 1000) return;
+          b64 = webmBuf.toString('base64');
         }
-        return;
-      }
-
-      pcmChunks.push(pcm);
-      if (rms > 280) {
-        speechMs += chunkMs;
-        silentMs = 0;
-      } else {
-        silentMs += chunkMs;
-      }
-
-      // Contextual full-sentence segmentation (eliminates 1-2 word fragments like "So it's" / "10:30")
-      const genuineEndOfTurn = speechMs >= 650 && silentMs >= 900;
-      const fullClausePause = speechMs >= 2600 && silentMs >= 450;
-      const wordBoundarySoftCeiling = speechMs >= 4800 && silentMs >= 180;
-      const hardSafetyCeiling = speechMs >= 6500;
-
-      if (genuineEndOfTurn || fullClausePause || wordBoundarySoftCeiling || hardSafetyCeiling) {
-        const fullPcm = Buffer.concat(pcmChunks);
-        const spokenSnapshotMs = Math.round(speechMs);
-        pcmChunks = [];
-        inSpeech = false;
-        speechMs = 0;
-        silentMs = 0;
-
-        if (fullPcm.length >= 16000) {
-          const payloadBuf = USE_COMPAT_WEBM
-            ? await encodePcmToTransparentWebm(fullPcm)
-            : wrapPcmInWavHeader(fullPcm, 16000);
-          if (payloadBuf.length > 1000 && ws.readyState === WebSocket.OPEN) {
-            sliceCount++;
-            const b64 = payloadBuf.toString('base64');
-            const fmtLabel = USE_COMPAT_WEBM ? '160k-Opus+dynaudnorm' : 'Lossless-WAV+dynaudnorm';
-            logger.info('Bridge', `Injecting Full-Context slice #${sliceCount} (${Math.round(payloadBuf.length / 1024)}KB ${fmtLabel}, ${spokenSnapshotMs}ms active speech) -> Gemini`);
-            cdpCall('Runtime.evaluate', {
-              expression: `if (window.vacfaAudioChunk) window.vacfaAudioChunk(${JSON.stringify(b64)});`,
-            }).catch(() => {});
-          }
-        }
-      }
-    });
-
-    ff.stderr.on('data', (err) => {
-      logger.warn('FFmpeg', err.toString().trim());
-    });
-
-    ff.on('close', (code) => {
-      logger.warn('FFmpeg', `DirectShow capture exited with code ${code}`);
+        logger.info('Bridge', `Injecting slice ${utteranceId} (${Math.round(b64.length * 0.75 / 1024)}KB, ${speechMs}ms speech) -> Gemini`);
+        cdpCall('Runtime.evaluate', {
+          expression: `if (window.vacfaAudioChunk) window.vacfaAudioChunk(${JSON.stringify(b64)});`,
+        }).catch(() => {});
+      },
     });
   });
 
@@ -316,4 +397,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { wrapPcmInWavHeader };
+module.exports = {
+  wrapPcmInWavHeader,
+  startInProcessVbCableCapture,
+  ROUTE_TEAMS_AUDIO_TO_VBCABLE_EXPR,
+};

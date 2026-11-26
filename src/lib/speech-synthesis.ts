@@ -12,6 +12,8 @@
 interface SpeechSynthesisController {
   speak: (text: string, langCode: string) => void;
   stop: () => void;
+  setMuted: (muted: boolean) => void;
+  isMuted: () => boolean;
   isSpeaking: () => boolean;
   isSupported: () => boolean;
 }
@@ -27,6 +29,8 @@ let currentAudioElement: HTMLAudioElement | null = null;
 let cachedVoices: SpeechSynthesisVoice[] = [];
 let queueGeneration = 0;
 let activeChunkResolver: (() => void) | null = null;
+// Hard engine-level mute lock: starts muted so no audio can ever leak until explicitly unmuted
+let isEngineMuted = true;
 
 /**
  * Loads available browser speech synthesis voices.
@@ -264,6 +268,22 @@ export function unlockAudioPlayback(): void {
 }
 
 /**
+ * Immediately silences any active HTMLAudioElement without triggering spurious onerror fallbacks.
+ */
+function silenceAudioElement(audio: HTMLAudioElement | null): void {
+  if (!audio) return;
+  audio.onended = null;
+  audio.onerror = null;
+  audio.muted = true;
+  audio.volume = 0;
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+  } catch {}
+  audio.removeAttribute('src');
+}
+
+/**
  * Plays a single speech chunk via Neural Audio Stream or SpeechSynthesis.
  * Guaranteed to execute fallback at most once, eliminating duplicate audio playback.
  */
@@ -274,8 +294,8 @@ function playAudioChunk(
   expectedGen: number
 ): Promise<void> {
   return new Promise((resolve) => {
-    // If stop() or channel switch occurred before this chunk started, abort immediately
-    if (queueGeneration !== expectedGen) {
+    // If muted, stopped, or channel switched before this chunk started, abort immediately
+    if (isEngineMuted || queueGeneration !== expectedGen) {
       resolve();
       return;
     }
@@ -293,13 +313,26 @@ function playAudioChunk(
 
     let fallbackInvoked = false;
     const invokeFallbackOnce = () => {
-      if (isDone || fallbackInvoked || queueGeneration !== expectedGen) return;
+      if (isDone || fallbackInvoked || isEngineMuted || queueGeneration !== expectedGen) {
+        finish();
+        return;
+      }
       fallbackInvoked = true;
+      // Ensure the HTMLAudioElement is completely silenced before fallback TTS begins
+      silenceAudioElement(persistentAudio);
       fallbackSpeechSynthesis(chunk, langCode, playbackRate, expectedGen).then(finish);
     };
 
     const startStreamingAudio = () => {
-      if (isDone || queueGeneration !== expectedGen) return;
+      if (isDone || isEngineMuted || queueGeneration !== expectedGen) {
+        finish();
+        return;
+      }
+
+      // Cancel any leftover browser SpeechSynthesis utterance before streaming audio
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
 
       const ttsLangMap: Record<string, string> = {
         sw: 'sw', // Authentic East African Kiswahili neural voice
@@ -318,6 +351,8 @@ function playAudioChunk(
 
       const audio = persistentAudio;
       currentAudioElement = audio;
+      audio.muted = false;
+      audio.volume = 1.0;
       audio.playbackRate = playbackRate;
 
       audio.onended = () => {
@@ -327,7 +362,11 @@ function playAudioChunk(
       };
 
       audio.onerror = () => {
-        // Audio stream failed (e.g. CORS/network limit) -> trigger fallback ONCE
+        // Audio stream failed (e.g. CORS/network limit) -> trigger fallback ONCE if still unmuted
+        if (isEngineMuted || queueGeneration !== expectedGen) {
+          finish();
+          return;
+        }
         invokeFallbackOnce();
       };
 
@@ -335,8 +374,8 @@ function playAudioChunk(
       const playPromise = audio.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          // If aborted because stop() or pause() was called, do NOT execute fallback!
-          if (err?.name === 'AbortError' || queueGeneration !== expectedGen) {
+          // If aborted because stop() or mute was called, do NOT execute fallback!
+          if (err?.name === 'AbortError' || isEngineMuted || queueGeneration !== expectedGen) {
             finish();
             return;
           }
@@ -352,7 +391,7 @@ function playAudioChunk(
 
 /**
  * Fallback SpeechSynthesis player for offline or blocked environments.
- * Uses expectedGen check and cancels any pending browser utterances before speaking.
+ * Uses expectedGen and isEngineMuted checks and cancels pending browser utterances before speaking.
  */
 function fallbackSpeechSynthesis(
   text: string,
@@ -366,7 +405,7 @@ function fallbackSpeechSynthesis(
       return;
     }
 
-    if (queueGeneration !== expectedGen) {
+    if (isEngineMuted || queueGeneration !== expectedGen) {
       resolve();
       return;
     }
@@ -415,6 +454,12 @@ function fallbackSpeechSynthesis(
       finish();
     };
 
+    if (isEngineMuted || queueGeneration !== expectedGen) {
+      clearTimeout(timeout);
+      finish();
+      return;
+    }
+
     window.speechSynthesis.speak(utterance);
   });
 }
@@ -426,12 +471,12 @@ function fallbackSpeechSynthesis(
  */
 async function processAudioQueue(): Promise<void> {
   if (isProcessingQueue) return;
-  if (audioQueue.length === 0) return;
+  if (isEngineMuted || audioQueue.length === 0) return;
 
   isProcessingQueue = true;
   const thisGen = queueGeneration;
 
-  while (audioQueue.length > 0 && queueGeneration === thisGen) {
+  while (audioQueue.length > 0 && !isEngineMuted && queueGeneration === thisGen) {
     const item = audioQueue.shift();
     if (!item) break;
 
@@ -459,8 +504,40 @@ async function processAudioQueue(): Promise<void> {
 export function createSpeechSynthesisController(): SpeechSynthesisController {
   const isSupported = typeof window !== 'undefined' && ('Audio' in window || 'speechSynthesis' in window);
 
+  const stopPlayback = (): void => {
+    // Invalidate in-flight and pending queue generation
+    queueGeneration++;
+
+    // Clear pending queue
+    audioQueue.length = 0;
+    isProcessingQueue = false;
+
+    // Abort active chunk promise immediately if one is awaiting
+    if (activeChunkResolver) {
+      activeChunkResolver();
+      activeChunkResolver = null;
+    }
+
+    // Silence both active and persistent HTMLAudioElement without triggering onerror fallback
+    silenceAudioElement(currentAudioElement);
+    silenceAudioElement(persistentAudio);
+    currentAudioElement = null;
+
+    // Cancel Web SpeechSynthesis (double-cancel guards against Windows Chrome/Edge SAPI lag)
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.pause();
+      window.speechSynthesis.cancel();
+      setTimeout(() => {
+        if (isEngineMuted) {
+          window.speechSynthesis.cancel();
+        }
+      }, 60);
+    }
+  };
+
   return {
     speak(text: string, langCode: string): void {
+      if (isEngineMuted) return;
       const clean = cleanTextForSpeech(text);
       if (!clean) return;
 
@@ -477,34 +554,22 @@ export function createSpeechSynthesisController(): SpeechSynthesisController {
     },
 
     stop(): void {
-      // Invalidate in-flight and pending queue generation
-      queueGeneration++;
+      stopPlayback();
+    },
 
-      // Clear pending queue
-      audioQueue.length = 0;
-      isProcessingQueue = false;
-
-      // Abort active chunk promise immediately if one is awaiting
-      if (activeChunkResolver) {
-        activeChunkResolver();
-        activeChunkResolver = null;
-      }
-
-      // Stop current active audio stream
-      if (currentAudioElement) {
-        currentAudioElement.pause();
-        currentAudioElement.removeAttribute('src');
-        currentAudioElement.load();
-        currentAudioElement = null;
-      }
-
-      // Cancel Web SpeechSynthesis
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+    setMuted(muted: boolean): void {
+      isEngineMuted = muted;
+      if (muted) {
+        stopPlayback();
       }
     },
 
+    isMuted(): boolean {
+      return isEngineMuted;
+    },
+
     isSpeaking(): boolean {
+      if (isEngineMuted) return false;
       if (isProcessingQueue || audioQueue.length > 0) return true;
       if (currentAudioElement && !currentAudioElement.paused) return true;
       if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return true;

@@ -94,7 +94,18 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
   // Live audio listening (TTS) — default to muted per user preference
   const [isAudioMuted, setIsAudioMuted] = useState(true);
+  const isAudioMutedRef = useRef(true);
   const ttsRef = useRef<ReturnType<typeof createSpeechSynthesisController> | null>(null);
+
+  /**
+   * Synchronously updates both React mute state and the underlying TTS engine mute lock
+   * so clicking Mute kills audio immediately with zero race condition.
+   */
+  const applyAudioMuteState = useCallback((muted: boolean) => {
+    isAudioMutedRef.current = muted;
+    setIsAudioMuted(muted);
+    ttsRef.current?.setMuted(muted);
+  }, []);
 
   // Audio level state
   const [audioLevel, setAudioLevel] = useState(0);
@@ -135,11 +146,13 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
   const [glossaryContext, setGlossaryContext] = useState('');
   const [glossarySubmitted, setGlossarySubmitted] = useState(false);
 
-  // Initialize Speech Synthesis controller
+  // Initialize Speech Synthesis controller (starts hard-muted until user unmutes)
   useEffect(() => {
-    ttsRef.current = createSpeechSynthesisController();
+    const controller = createSpeechSynthesisController();
+    controller.setMuted(isAudioMutedRef.current);
+    ttsRef.current = controller;
     return () => {
-      ttsRef.current?.stop();
+      controller.setMuted(true);
     };
   }, []);
 
@@ -180,17 +193,38 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
 
   const playedCaptionIdsRef = useRef<Set<string>>(new Set());
 
+  /**
+   * Determines whether a live caption was already spoken in the listener's selected audio language,
+   * preventing double-audio echo when listening inside a live Teams/Zoom meeting.
+   */
+  const isSameLanguageAsSpeaker = useCallback((cap: CaptionEntry, targetLang: string): boolean => {
+    if (cap.id.startsWith('instruction')) return false;
+    const tagMatch = cap.speaker?.match(/\((EN|FR|PT|SW)\)\s*$/i);
+    if (tagMatch && tagMatch[1].toLowerCase() === targetLang.toLowerCase()) {
+      return true;
+    }
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\u00C0-\u024F]+/g, ' ').trim();
+    const orig = norm(cap.originalText || '');
+    const trans = norm(cap.translations?.[targetLang] || '');
+    return Boolean(orig && trans && orig === trans);
+  }, []);
+
   // Handle incoming audio playback when a caption is generated/received
   const playCaptionAudio = useCallback(
     (cap: CaptionEntry) => {
-      if (isAudioMuted || !ttsRef.current) return;
+      if (isAudioMutedRef.current || isAudioMuted || !ttsRef.current) return;
       if (playedCaptionIdsRef.current.has(cap.id)) return;
+      // Silence-on-Same-Language: never speak English TTS over a live English speaker in Teams
+      if (isSameLanguageAsSpeaker(cap, audioLang)) {
+        playedCaptionIdsRef.current.add(cap.id);
+        return;
+      }
       const translated = cap.translations?.[audioLang] || cap.originalText;
       if (!translated || translated === '...') return;
       playedCaptionIdsRef.current.add(cap.id);
       ttsRef.current.speak(translated, audioLang);
     },
-    [audioLang, isAudioMuted]
+    [audioLang, isAudioMuted, isSameLanguageAsSpeaker]
   );
 
   // Channel selection prompt on initial session load
@@ -202,7 +236,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       ttsRef.current?.stop();
       setAudioLang(langCode);
       setCaptionLang(langCode);
-      setIsAudioMuted(false);
+      applyAudioMuteState(false);
       unlockAudioPlayback();
       setShowChannelPrompt(false);
 
@@ -210,14 +244,36 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       if (captions.length > 0) {
         const lastCap = captions[captions.length - 1];
         playedCaptionIdsRef.current.add(lastCap.id);
-        const translated = lastCap.translations?.[langCode] || lastCap.originalText;
-        if (translated && translated !== '...') {
-          ttsRef.current?.speak(translated, langCode);
+        if (!isSameLanguageAsSpeaker(lastCap, langCode)) {
+          const translated = lastCap.translations?.[langCode] || lastCap.originalText;
+          if (translated && translated !== '...') {
+            ttsRef.current?.speak(translated, langCode);
+          }
         }
       }
     },
-    [captions]
+    [captions, applyAudioMuteState, isSameLanguageAsSpeaker]
   );
+
+  // Toggles the top-right Audio Channel mute button with instant synchronous TTS cutoff
+  const toggleAudioMute = useCallback(() => {
+    const nextMuted = !isAudioMutedRef.current;
+    applyAudioMuteState(nextMuted);
+    if (!nextMuted) {
+      unlockAudioPlayback();
+      playedCaptionIdsRef.current.clear();
+      if (captions.length > 0) {
+        const lastCap = captions[captions.length - 1];
+        playedCaptionIdsRef.current.add(lastCap.id);
+        if (!isSameLanguageAsSpeaker(lastCap, audioLang)) {
+          const translated = lastCap.translations?.[audioLang] || lastCap.originalText;
+          if (translated && translated !== '...') {
+            ttsRef.current?.speak(translated, audioLang);
+          }
+        }
+      }
+    }
+  }, [applyAudioMuteState, audioLang, captions, isSameLanguageAsSpeaker]);
 
   const renderChannelPromptModal = () => (
     <Modal
@@ -342,7 +398,7 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
           <button
             type="button"
             onClick={() => {
-              setIsAudioMuted(true);
+              applyAudioMuteState(true);
               setShowChannelPrompt(false);
             }}
             style={{
@@ -707,25 +763,9 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
               </div>
 
               <button
+                type="button"
                 className={`${styles.teamsAudioBtn} ${isAudioMuted ? styles.teamsAudioBtnMuted : styles.teamsAudioBtnActive}`}
-                onClick={() => {
-                  const nextState = !isAudioMuted;
-                  setIsAudioMuted(nextState);
-                  if (nextState) {
-                    ttsRef.current?.stop();
-                  } else {
-                    unlockAudioPlayback();
-                    playedCaptionIdsRef.current.clear();
-                    if (captions.length > 0) {
-                      const lastCap = captions[captions.length - 1];
-                      playedCaptionIdsRef.current.add(lastCap.id);
-                      const translated = lastCap.translations?.[audioLang] || lastCap.originalText;
-                      if (translated && translated !== '...') {
-                        ttsRef.current?.speak(translated, audioLang);
-                      }
-                    }
-                  }
-                }}
+                onClick={toggleAudioMute}
               >
                 {isAudioMuted ? <VolumeX size={13} /> : <Volume2 size={13} className="animate-pulse" />}
                 <span>{isAudioMuted ? 'Muted' : 'Listening'}</span>
@@ -1213,25 +1253,10 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h2 className={styles.channelsTitle} style={{ margin: 0 }}>Audio Channel</h2>
             <button
-              onClick={() => {
-                const nextState = !isAudioMuted;
-                setIsAudioMuted(nextState);
-                if (nextState) {
-                  ttsRef.current?.stop();
-                } else {
-                  unlockAudioPlayback();
-                  playedCaptionIdsRef.current.clear();
-                  if (captions.length > 0) {
-                    const lastCap = captions[captions.length - 1];
-                    playedCaptionIdsRef.current.add(lastCap.id);
-                    const translated = lastCap.translations?.[audioLang] || lastCap.originalText;
-                    if (translated && translated !== '...') {
-                      ttsRef.current?.speak(translated, audioLang);
-                    }
-                  }
-                }
-              }}
-              title={isAudioMuted ? 'Click to Listen Live' : 'Mute Spoken Audio'}
+              type="button"
+              onClick={toggleAudioMute}
+              title={isAudioMuted ? 'Audio is muted — click to listen live' : 'Listening live — click to mute spoken audio'}
+              aria-pressed={!isAudioMuted}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1260,7 +1285,11 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
                   key={`audio-${lang.code}`}
                   className={`${styles.channelItem} ${isActive ? styles.channelActive : ''}`}
                   onClick={() => {
-                    selectChannelAndUnmute(lang.code);
+                    ttsRef.current?.stop();
+                    setAudioLang(lang.code);
+                    if (!isAudioMutedRef.current) {
+                      unlockAudioPlayback();
+                    }
                   }}
                 >
                   <div className={styles.channelInfo}>

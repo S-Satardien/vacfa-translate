@@ -435,30 +435,42 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
     };
   }, [audioLang, currentSession.id, currentSession.languages]);
 
-  // Microsoft Teams Bot Ingestion Relay Bridge (Port 9876: WebSocket + SSE)
+  // Microsoft Teams Bot Ingestion Relay Bridge (Local Port 9876 + Remote HTTPS Cloud SSE)
   const [isBotRelayConnected, setIsBotRelayConnected] = useState(false);
+  const playCaptionAudioRef = useRef(playCaptionAudio);
+  playCaptionAudioRef.current = playCaptionAudio;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     let ws: WebSocket | null = null;
     let eventSource: EventSource | null = null;
-    let reconnectTimeout: any = null;
-    let isConnected = false;
+    let cloudEventSource: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let cloudFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let isLocalConnected = false;
+    let hadLocalConnection = false;
 
-    function handlePayload(data: any) {
+    const activeSlot = (sessionId || currentSession.id || 'session-009').replace(/[^a-zA-Z0-9_-]/g, '');
+    const cloudTopic = `vacfa-translate-live-9f4a2c-${activeSlot}`;
+
+    function handlePayload(data: any, allowAudioPlayback = true) {
       if (data.type === 'caption') {
         const cap: CaptionEntry = data.caption;
         setCaptions((prev) => {
-          const isDup = prev.slice(-4).some(
-            (c) => c.originalText.trim().toLowerCase() === cap.originalText.trim().toLowerCase()
+          const isDup = prev.slice(-8).some(
+            (c) =>
+              c.id === cap.id ||
+              c.originalText.trim().toLowerCase() === cap.originalText.trim().toLowerCase()
           );
           if (isDup) return prev;
           return [...prev, cap];
         });
         setPartialText('');
         setCurrentSpeaker(cap.speaker);
-        playCaptionAudio(cap);
+        if (allowAudioPlayback) {
+          playCaptionAudioRef.current(cap);
+        }
       } else if (data.type === 'interim') {
         setCurrentSpeaker(data.speaker || 'Teams Speaker');
         setPartialText(data.text);
@@ -474,35 +486,77 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
       }
     }
 
+    /**
+     * Subscribes remote colleague browsers (where 127.0.0.1:9876 is unreachable) to the
+     * HTTPS Server-Sent Events cloud relay with 90s catch-up so participants immediately
+     * see active captions and hear real-time TTS without speaking historical backlog.
+     */
+    function connectCloudRelay() {
+      if (cloudEventSource || isLocalConnected) return;
+      try {
+        cloudEventSource = new EventSource(`https://ntfy.sh/${cloudTopic}/sse?since=90s`);
+        cloudEventSource.onopen = () => {
+          setIsBotRelayConnected(true);
+        };
+        cloudEventSource.onmessage = (event) => {
+          try {
+            const envelope = JSON.parse(event.data);
+            if (envelope?.event === 'message' && typeof envelope.message === 'string') {
+              const payload = JSON.parse(envelope.message);
+              const ageMs = typeof envelope.time === 'number' ? Date.now() - envelope.time * 1000 : 0;
+              handlePayload(payload, ageMs < 12000);
+            }
+          } catch {}
+        };
+        cloudEventSource.onerror = () => {
+          if (!isLocalConnected) {
+            setIsBotRelayConnected(false);
+          }
+        };
+      } catch {}
+    }
+
     function tryWebSocket() {
       try {
         ws = new WebSocket('ws://127.0.0.1:9876');
 
         ws.onopen = () => {
-          isConnected = true;
+          isLocalConnected = true;
+          hadLocalConnection = true;
           setIsBotRelayConnected(true);
+          if (cloudFallbackTimer) {
+            clearTimeout(cloudFallbackTimer);
+            cloudFallbackTimer = null;
+          }
+          if (cloudEventSource) {
+            cloudEventSource.close();
+            cloudEventSource = null;
+          }
         };
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            handlePayload(data);
+            handlePayload(data, true);
           } catch {}
         };
 
         ws.onerror = () => {
-          if (!isConnected) {
-            tryEventSource();
+          if (!isLocalConnected) {
+            connectCloudRelay();
+            if (hadLocalConnection) tryEventSource();
           }
         };
 
         ws.onclose = () => {
-          isConnected = false;
-          setIsBotRelayConnected(false);
-          reconnectTimeout = setTimeout(tryWebSocket, 3000);
+          isLocalConnected = false;
+          connectCloudRelay();
+          if (hadLocalConnection) {
+            reconnectTimeout = setTimeout(tryWebSocket, 5000);
+          }
         };
       } catch {
-        tryEventSource();
+        connectCloudRelay();
       }
     }
 
@@ -511,35 +565,45 @@ export default function LiveSessionClient({ session, sessionId }: LiveSessionCli
         eventSource = new EventSource('http://127.0.0.1:9876/events');
 
         eventSource.onopen = () => {
-          isConnected = true;
+          isLocalConnected = true;
+          hadLocalConnection = true;
           setIsBotRelayConnected(true);
         };
 
         eventSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            handlePayload(data);
+            handlePayload(data, true);
           } catch {}
         };
 
         eventSource.onerror = () => {
-          isConnected = false;
-          setIsBotRelayConnected(false);
+          isLocalConnected = false;
           eventSource?.close();
+          connectCloudRelay();
         };
       } catch {
-        setIsBotRelayConnected(false);
+        connectCloudRelay();
       }
     }
+
+    // Fast-fail into HTTPS Cloud SSE within 600ms for remote colleagues so they never wait on localhost timeouts
+    cloudFallbackTimer = setTimeout(() => {
+      if (!isLocalConnected) {
+        connectCloudRelay();
+      }
+    }, 600);
 
     tryWebSocket();
 
     return () => {
+      if (cloudFallbackTimer) clearTimeout(cloudFallbackTimer);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (ws) ws.close();
       if (eventSource) eventSource.close();
+      if (cloudEventSource) cloudEventSource.close();
     };
-  }, [playCaptionAudio]);
+  }, [sessionId, currentSession.id]);
 
   const handleLeave = () => {
     ttsRef.current?.stop();

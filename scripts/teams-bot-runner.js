@@ -182,7 +182,7 @@ setInterval(() => {
   }
 }, 15000);
 
-/** Broadcast a JSON payload to every connected web-app client. */
+/** Broadcast a JSON payload to every connected web-app client (local WS/SSE + remote Cloud SSE). */
 function broadcastToClients(data) {
   const raw = JSON.stringify(data);
   if (wss) for (const c of wss.clients) {
@@ -191,6 +191,16 @@ function broadcastToClients(data) {
   const sse = `data: ${raw}\n\n`;
   for (const c of sseClients) {
     try { c.write(sse); } catch { sseClients.delete(c); }
+  }
+  // Mirror finalized captions to HTTPS Cloud SSE relay so remote colleagues receive live captions & TTS
+  if (data && data.type === 'caption') {
+    const slotMatch = String(SESSION_URL).match(/live\/([a-zA-Z0-9_-]+)/);
+    const slot = slotMatch ? slotMatch[1] : 'session-009';
+    fetch(`https://ntfy.sh/vacfa-translate-live-9f4a2c-${slot}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: raw,
+    }).catch(() => {});
   }
 }
 
@@ -241,6 +251,11 @@ Always transcribe and preserve the exact spelling of these team members and meet
 - Rudzani Muloiwa (Professor & Head of Department)
 - Funke Alaba (Health Economist & Senior Collaborator, UCT)
 - Richard White (Professor of Infectious Disease Modelling, LSHTM)
+- Sidy Ndiaye (NITAG / Partner Representative — often misheard as "Sidi" or "City"; ALWAYS transcribe as "Sidy Ndiaye")
+- Yolande Vuo Masembe (Partner Representative — often misheard as "Your lunch"; ALWAYS transcribe as "Yolande")
+- Dr. Solange (Senior Collaborator — often misheard as "hot lunch" or "so lunch"; ALWAYS transcribe as "Solange")
+- Belsinia Baza (Partner Representative — often misheard as "bel signe", "belle siña", "belsignat"; ALWAYS transcribe as "Belsinia Baza")
+- Jessica Da Veiga dos Santos de Sousa Soares, Ednilza Gomes, Eula Maquengo (São Tomé e Príncipe), Bakissy Pina, Kátia Toancha, Joana Cortez Alves, Achille Lanzy
 - Timber Study / #TimberStudy (Clinical trial / research protocol)
 
 TRANSLATION INTEGRITY RULE FOR PROPER NAMES & CONCISENESS:
@@ -269,8 +284,9 @@ AFRICAN LINGUISTIC ZONES & ACCENT SENSITIVITY:
 1. Anglophone Africa (South Africa en-ZA, Nigeria en-NG, Kenya en-KE, Ghana en-GH):
    - South African English phonology (centralized kit/pin vowels, non-rhotic cadence, glottal stops, unstressed diphthongs).
    - "Matric" (Grade 12 National Senior Certificate, NEVER transcribe as "Matrix"), "Heathfield", "tertiary", "educators", "alumni", "CHW" (Community Health Worker).
-2. Francophone Africa (Senegal, Côte d'Ivoire, DRC, Cameroon, Rwanda):
-   - African French vowel cadence and technical terms: PEV (Programme Élargi de Vaccination), MAPI (Manifestations Post-vaccinales Indésirables), chaîne du froid, surveillance épidémiologique.
+2. Francophone Africa (Senegal, Côte d'Ivoire, DRC, Cameroon, Rwanda) & Francophone-Accented English:
+   - African French vowel cadence and technical terms: PEV (Programme Élargi de Vaccination), GTCV (Groupe Technique Consultatif sur la Vaccination / Francophone NITAG), MAPI (Manifestations Post-vaccinales Indésirables), chaîne du froid, surveillance épidémiologique, question PICO, vaccin pentavalent / hexavalent.
+   - Francophone & Lusophone speakers speaking English: watch carefully for French/Portuguese uvular /r/ and /th/ -> /s/ or /z/ pronunciations; always contextualize clinical research phrasing (e.g., "synthesizing evidence" — NEVER "sensitizing evidence"; "Evidence-to-Recommendation / E2R"; "collecting evidence"; "rearrange"; "NITAG").
 3. Lusophone Africa (Angola pt-AO, Mozambique pt-MZ - PALOP):
    - Transcribe and translate into African/European Portuguese: PAV (Programa Alargado de Vacinação), EAPV (Eventos Adversos Pós-Vacinação), cadeia de frio. Avoid Brazilian colloquialisms.
 4. East & Central African Kiswahili:
@@ -301,20 +317,24 @@ async function transcribeAndTranslateAudio(base64Audio) {
   const apiKey = apiKeys[audioCallCount % apiKeys.length];
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash-lite',
-    'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
-    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
     'gemini-flash-latest',
-  ].filter((m, i, a) => m && a.indexOf(m) === i);
+  ];
+
+  const contextClause = lastSpokenContext
+    ? ` Previous phrase context (for grammatical continuity only, DO NOT repeat): "${lastSpokenContext}".`
+    : '';
 
   for (const model of candidateModels) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6500);
+      const timer = setTimeout(() => ctrl.abort(), 5500);
 
-      const promptText = 'Transcribe ONLY the audibly spoken human speech in this audio chunk. If silence or noise, reply {"noSpeech":true}. NEVER hallucinate or invent sentences.';
+      const promptText = `Transcribe ONLY the audibly spoken human speech in this audio chunk (speakers may be speaking French, English, Portuguese, or Swahili).${contextClause} Detect the spoken language ("fr", "en", "pt", or "sw"), remove vocal hesitation fillers ("euh", "um", "uh"), and translate accurately into all 4 languages (en, fr, pt, sw) — especially natural, accurate English ("en") when French is spoken. If silence or noise, reply {"noSpeech":true}. NEVER hallucinate or invent sentences.`;
+
+      const audioMimeType = base64Audio.startsWith('UklGR') ? 'audio/wav' : 'audio/webm';
 
       const res = await fetch(url, {
         method: 'POST',
@@ -322,12 +342,16 @@ async function transcribeAndTranslateAudio(base64Audio) {
         body: JSON.stringify({
           contents: [{
             parts: [
-              { inlineData: { mimeType: 'audio/webm', data: base64Audio } },
+              { inlineData: { mimeType: audioMimeType, data: base64Audio } },
               { text: promptText },
             ],
           }],
           systemInstruction: { parts: [{ text: AUDIO_SYSTEM_PROMPT }] },
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.0 },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.0,
+            ...(model === 'gemini-3.5-flash' ? { thinkingConfig: { thinkingBudget: 128 } } : {}),
+          },
         }),
         signal: ctrl.signal,
       });
@@ -402,6 +426,15 @@ function cleanAndNormalizeSpokenText(text) {
   cleaned = cleaned
     // Xolie Ndlela (often misheard as collie, coley, jolly)
     .replace(/\b([Cc]ollie|[Cc]oley|[Jj]olly)\b/g, 'Xolie')
+    // Live meeting participants & francophone/lusophone names
+    .replace(/\b(hot\s+lunch|so\s+lunch|so\s+longe?)\b/gi, 'Solange')
+    .replace(/\b(for\s+your\s+lunch|your\s+lunch|you\s+lunch)\b/gi, 'Yolande')
+    .replace(/\b(bel\s*signe?s?|belle\s*si[ñn]a|belsign[ay]t?|belsi(?:gne|gny)?)\b/gi, 'Belsinia')
+    .replace(/\b(petronilla)\b/gi, 'Petronella')
+    .replace(/\b(nitec|night\s*tech)\b/gi, 'NITAG')
+    .replace(/\b(sensitiz(e|ing)|sensitis(e|ing))\s+(the\s+)?evidence\b/gi, 'synthesizing $3evidence')
+    .replace(/\b(sidi)\b/gi, 'Sidy')
+    .replace(/\b(so\s+city)\b/gi, 'So Sidy')
     // NISH / NISH 2.0 (often misheard as niche, nietzsche)
     .replace(/\b([Nn]iche|[Nn]ietzsche)\b/g, 'NISH')
     // PICARD Fund (often misheard as p-card, pickard)
@@ -417,17 +450,20 @@ function cleanAndNormalizeSpokenText(text) {
       return /results|tertiary|senior|grade|school|student|pass/i.test(str) ? 'Matric' : match;
     });
 
-  // 2. Disfluency & Vocal Hesitation Stripping
-  // Leading fillers: "Um, ", "Uh, ", "Uhm, ", "Ah, ", "Er, "
-  cleaned = cleaned.replace(/^(um|uh|uhm|ah|er|hmm)[,\s]+/i, '');
-  // Trailing fillers: ", um", ", uh"
-  cleaned = cleaned.replace(/[,\s]+(um|uh|uhm|ah|er|hmm)$/i, '');
+  // 2. Disfluency & Vocal Hesitation Stripping (English + French "euh")
+  // Leading fillers: "Um, ", "Uh, ", "Uhm, ", "Ah, ", "Er, ", "Euh, "
+  cleaned = cleaned.replace(/^(um|uh|uhm|ah|er|hmm|euh|bah|hum|uh-huh)[,\s.]+/i, '');
+  // Trailing fillers: ", um", ", uh", ", euh"
+  cleaned = cleaned.replace(/[,\s]+(um|uh|uhm|ah|er|hmm|euh|hum)$/i, '');
   // Inline standalone fillers with surrounding punctuation: "..., um, ..." -> "..., ..."
-  cleaned = cleaned.replace(/,\s*(um|uh|uhm|er|hmm)\s*,/gi, ',');
-  cleaned = cleaned.replace(/\s+(um|uh|uhm|er|hmm)\s+/gi, ' ');
+  cleaned = cleaned.replace(/,\s*(um|uh|uhm|er|hmm|euh|hum)\s*,/gi, ',');
+  cleaned = cleaned.replace(/\s+(um|uh|uhm|er|hmm|euh|hum)\s+/gi, ' ');
 
-  // 3. De-duplicate immediate stuttered word repetitions ("can can you" -> "can you", "we we" -> "we")
-  cleaned = cleaned.replace(/\b([A-Za-z]+)\s+\1\b/gi, '$1');
+  // 3. Collapse glued & punctuated N-repeat loops ("the, the, the, the", "thank, thank, thank", "OKOK", "pourra pourra")
+  cleaned = cleaned
+    .replace(/\b(ok)(ok)+\b/gi, 'OK')
+    .replace(/\b(?!nous\b|vous\b)([A-Za-zÀ-ÿ']+)(?:(?:\s*[,;.\-]\s*|\s+)\1\b)+/gi, '$1')
+    .replace(/\b([A-Za-zÀ-ÿ]+\s+[A-Za-zÀ-ÿ]+)(?:(?:\s*[,;.\-]\s*|\s+)\1\b)+/gi, '$1');
 
   // 4. Remove conversational apologetic stutter if trailing ("..., sorry I can't")
   cleaned = cleaned.replace(/,\s*sorry[,\s]+i can'?t$/i, '');
@@ -436,9 +472,11 @@ function cleanAndNormalizeSpokenText(text) {
 }
 
 const TEXT_TRANSLATION_PROMPT = `
-You are VACFA Translate, an expert simultaneous interpreter. Translate the given text into en, fr, pt, sw.
-Clean away vocal hesitation sounds (e.g. "Um", "Uh", "Er", "Hmm") from all translation outputs.
-Use VACFA medical and institutional glossary terms where applicable.
+You are VACFA Translate, an expert simultaneous conference interpreter for African vaccinology & NITAG (GTCV) meetings.
+Translate the given text accurately into en, fr, pt, sw (if spoken in French, provide fluent, accurate English in "en").
+Clean away vocal hesitation sounds (e.g. "Um", "Uh", "Er", "Hmm", "Euh") and repeated stuttered words from all translation outputs.
+Preserve proper participant names without translating them: Sidy Ndiaye, Yolande Vuo Masembe, Dr. Solange, Belsinia Baza, Jessica Da Veiga, Ednilza Gomes, Eula Maquengo, Bakissy Pina, Kátia Toancha, Joana Cortez Alves, Achille Lanzy, Petronella Ncube, Benjamin Kagina, Alana Keyser, Xolie Ndlela, Saleem Satardien.
+Preserve vaccinology terms: GTCV (French NITAG), NITAG, PICO question, E2R (Evidence-to-Recommendation), pentavalent, hexavalent, VPOP, NISH, VACFA, RSV, AEFI, MAPI, PEV, PAV.
 Output ONLY valid JSON:
 { "detectedLanguage":"en", "translations":{"en":"...","fr":"...","pt":"...","sw":"..."}, "detectedGlossaryTerms":[] }`;
 
@@ -447,25 +485,27 @@ async function translateText(text, speaker = 'Participant') {
   if (!apiKey) return fallbackTranslate(text);
 
   const candidateModels = [
-    process.env.NEXT_PUBLIC_GEMINI_MODEL || 'gemini-3.5-flash-lite',
-    'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
-    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
     'gemini-flash-latest',
-  ].filter((m, i, a) => m && a.indexOf(m) === i);
+  ];
 
   for (const model of candidateModels) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 7500);
+      const timer = setTimeout(() => ctrl.abort(), 5500);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: `Speaker "${speaker}": "${text}"` }] }],
           systemInstruction: { parts: [{ text: TEXT_TRANSLATION_PROMPT }] },
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+            ...(model === 'gemini-3.5-flash' ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          },
         }),
         signal: ctrl.signal,
       });
@@ -810,25 +850,25 @@ const PRE_JOIN_SCRIPT = `
     );
     if(contBtn){contBtn.click();return;}
 
-    /* Name input */
-    const nameIn=document.querySelector('input[data-tid="prejoin-display-name-input"],input[placeholder*="name" i],input[aria-label*="name" i]');
-    if(nameIn&&nameIn.value!==BOT_NAME){
+    /* Name input (React 18 native value setter required to enable Join Now) */
+    const nameIn=document.querySelector('input[data-tid="prejoin-display-name-input"],input[placeholder*="name" i],input[aria-label*="name" i],input[type="text"]');
+    if(nameIn&&!window.__VACFA_NAME_TYPED__){
+      window.__VACFA_NAME_TYPED__=true;
+      const nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
       nameIn.focus();
-      nameIn.value=BOT_NAME;
+      if(nativeSetter)nativeSetter.call(nameIn,BOT_NAME);
+      else nameIn.value=BOT_NAME;
       nameIn.dispatchEvent(new Event('input',{bubbles:true}));
       nameIn.dispatchEvent(new Event('change',{bubbles:true}));
     }
 
-    /* Mute mic */
-    const micBtn=document.querySelector('button[data-tid="toggle-mute"],button[aria-label*="microphone" i]');
-    if(micBtn&&micBtn.getAttribute('aria-checked')==='true')micBtn.click();
-
-    /* Turn off camera */
-    const camBtn=document.querySelector('button[data-tid="toggle-video"],button[aria-label*="camera" i]');
-    if(camBtn&&camBtn.getAttribute('aria-checked')==='true')camBtn.click();
+    /* Mute mic & camera switches */
+    Array.from(document.querySelectorAll('input[type="checkbox"],button[role="switch"],button[data-tid="toggle-mute"],button[data-tid="toggle-video"]')).forEach(sw=>{
+      if(sw.checked||sw.getAttribute('aria-checked')==='true')sw.click();
+    });
 
     /* Click "Join now" */
-    const joinBtn=document.querySelector('button[data-tid="prejoin-join-button"],button#prejoin-join-button');
+    const joinBtn=document.querySelector('button[data-tid="prejoin-join-button"],button#prejoin-join-button')||Array.from(document.querySelectorAll('button')).find(b=>/join now/i.test(b.textContent||''));
     if(joinBtn&&!joinBtn.disabled){joinBtn.click();}
   }
 
@@ -845,8 +885,7 @@ const PRE_JOIN_SCRIPT = `
       handlePreJoin();
       if(checkInMeeting()){
         joinedMeeting=true;
-        console.log('[VACFA Bot] Inside meeting — audio mixer active');
-        enableCaptions();
+        console.log('[VACFA Bot] Inside meeting — 100% Direct Audio-Only mode active (Teams Live Captions disabled)');
         setTimeout(postChatAnnouncement,6000);
       }
     }
@@ -1265,47 +1304,31 @@ async function main() {
     await cdpSend('Runtime.addBinding', { name: 'vacfaSpeechData' });
     console.log('[Bot] ✅ Runtime bindings active (vacfaAudioChunk, vacfaSpeechData)');
 
-    // 4. Inject scripts for all subsequent page navigations
+    // 4. Inject scripts for all subsequent page navigations (Audio-Only Mode — Teams Live Captions disabled)
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: AUDIO_INTERCEPTOR_SCRIPT });
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: PRE_JOIN_SCRIPT });
-    await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: CAPTION_OBSERVER_SCRIPT });
     await cdpSend('Page.addScriptToEvaluateOnNewDocument', { source: TEAMS_STAGE_OPTIMIZER_SCRIPT });
-    console.log('[Bot] ✅ Pre-load interceptors & stage optimizer armed for page loads');
+    console.log('[Bot] ✅ Pre-load audio interceptors & stage optimizer armed (Audio-Only Mode)');
 
     // 5. Evaluate immediately on the currently loaded page
     await cdpSend('Runtime.evaluate', { expression: AUDIO_INTERCEPTOR_SCRIPT });
     await cdpSend('Runtime.evaluate', { expression: PRE_JOIN_SCRIPT });
-    await cdpSend('Runtime.evaluate', { expression: CAPTION_OBSERVER_SCRIPT });
     await cdpSend('Runtime.evaluate', { expression: TEAMS_STAGE_OPTIMIZER_SCRIPT });
     console.log('[Bot] ✅ Interceptors & stage optimizer activated on current Teams tab');
 
     // 6. Keep active monitor alive to handle dynamically added elements / iframes
     setInterval(() => {
       cdpSend('Runtime.evaluate', { expression: PRE_JOIN_SCRIPT }).catch(() => {});
-      cdpSend('Runtime.evaluate', { expression: CAPTION_OBSERVER_SCRIPT }).catch(() => {});
       cdpSend('Runtime.evaluate', { expression: TEAMS_STAGE_OPTIMIZER_SCRIPT }).catch(() => {});
     }, 2000);
 
-    // 7. Dispatch Ctrl+Shift+C key combination via CDP hardware input
-    setTimeout(async () => {
-      try {
-        await cdpSend('Input.dispatchKeyEvent', {
-          type: 'rawKeyDown',
-          windowsVirtualKeyCode: 67,
-          modifiers: 10,
-          code: 'KeyC',
-          key: 'C',
-        });
-        await cdpSend('Input.dispatchKeyEvent', {
-          type: 'keyUp',
-          windowsVirtualKeyCode: 67,
-          modifiers: 10,
-          code: 'KeyC',
-          key: 'C',
-        });
-        console.log('[Bot] Dispatched Ctrl+Shift+C hardware hotkey for Teams Live Captions');
-      } catch {}
-    }, 12000);
+    // 7. Auto-start Direct VB-Cable Audio Bridge on Windows if available (100% Audio-Only, bypasses Chrome MediaRecorder bugs)
+    if (process.platform === 'win32' && fs.existsSync(path.join(__dirname, 'vbcable-audio-bridge.js'))) {
+      setTimeout(() => {
+        console.log('[Bot] 🎧 Launching Direct VB-Cable Audio Bridge (100% Direct Audio -> Gemini Multimodal)...');
+        spawn(process.execPath, [path.join(__dirname, 'vbcable-audio-bridge.js')], { stdio: 'inherit' });
+      }, 10000);
+    }
 
     // 9. Start CDP Screencast for Live Meeting Video Relay (Approach A) Full HD 1080p
     try {
@@ -1385,8 +1408,8 @@ async function main() {
             cleanTranslations[lang] = cleanAndNormalizeSpokenText(trText);
           }
 
-          console.log(`\n🎙️  [${speaker}] (AI: ${elapsed}ms): "${spoken}"`);
-          console.log(`🌍  FR: "${cleanTranslations.fr || ''}" | PT: "${cleanTranslations.pt || ''}" | SW: "${cleanTranslations.sw || ''}"`);
+          console.log(`\n🎙️  [${speaker}] (${(result.detectedLanguage || 'fr').toUpperCase()} | AI: ${elapsed}ms): "${spoken}"`);
+          console.log(`🌍  EN: "${cleanTranslations.en || ''}" | FR: "${cleanTranslations.fr || ''}" | PT: "${cleanTranslations.pt || ''}" | SW: "${cleanTranslations.sw || ''}"`);
 
           const entry = {
             id: `bot-audio-${Date.now()}`,
